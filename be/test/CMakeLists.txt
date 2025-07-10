@@ -198,6 +198,7 @@ set(EXEC_FILES
         ./formats/parquet/parquet_cli_reader.h
         ./formats/parquet/parquet_cli_reader_test.cpp
         ./formats/parquet/parquet_ut_base.cpp
+        ./formats/parquet/parquet_variant_test.cpp
         ./formats/parquet/page_index_test.cpp
         ./formats/parquet/statistics_helper_test.cpp
         ./formats/disk_range_test.cpp
