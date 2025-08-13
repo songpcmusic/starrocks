@@ -273,8 +273,8 @@ public class PaimonMetadata implements ConnectorMetadata {
         PaimonTable paimonTable = (PaimonTable) table;
         long latestSnapshotId = -1L;
         try {
-            if (paimonTable.getNativeTable().latestSnapshotId().isPresent()) {
-                latestSnapshotId = paimonTable.getNativeTable().latestSnapshotId().getAsLong();
+            if (paimonTable.getNativeTable().latestSnapshot().isPresent()) {
+                latestSnapshotId = paimonTable.getNativeTable().latestSnapshot().get().id();
             }
         } catch (Exception e) {
             // System table does not have snapshotId, ignore it.
