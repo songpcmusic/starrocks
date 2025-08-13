@@ -45,6 +45,7 @@ import com.starrocks.thrift.TPlanNodeType;
 import com.starrocks.thrift.TScanRange;
 import com.starrocks.thrift.TScanRangeLocation;
 import com.starrocks.thrift.TScanRangeLocations;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.paimon.data.BinaryRow;
@@ -410,6 +411,10 @@ public class PaimonScanNode extends ScanNode {
 
         if (paimonTable != null) {
             msg.hdfs_scan_node.setTable_name(paimonTable.getName());
+        }
+
+        if (CollectionUtils.isNotEmpty(columnAccessPaths)) {
+            msg.hdfs_scan_node.setColumn_access_paths(columnAccessPathToThrift());
         }
 
         HdfsScanNode.setScanOptimizeOptionToThrift(tHdfsScanNode, this);

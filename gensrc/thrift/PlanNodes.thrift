@@ -1124,6 +1124,8 @@ struct THdfsScanNode {
     20: optional bool load_column_stats;
 
     22: optional DataCache.TDataCacheOptions datacache_options;
+
+    23: optional list<TColumnAccessPath> column_access_paths;
 }
 
 struct TProjectNode {

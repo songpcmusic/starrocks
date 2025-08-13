@@ -644,7 +644,7 @@ under the License.
 
         <dependency>
             <groupId>org.apache.paimon</groupId>
-            <artifactId>paimon-bundle</artifactId>
+            <artifactId>paimon-ali-emr-spark-4.0</artifactId>
         </dependency>
 
         <dependency>

@@ -1262,6 +1262,9 @@ public class PlanFragmentBuilder {
                 throw new StarRocksPlannerException(e.getMessage(), INTERNAL_ERROR);
             }
 
+            // set column access path
+            paimonScanNode.setColumnAccessPaths(computeAllColumnAccessPath(node, context));
+
             paimonScanNode.setLimit(node.getLimit());
             paimonScanNode.setDataCacheOptions(node.getDataCacheOptions());
 

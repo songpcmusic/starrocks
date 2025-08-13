@@ -1105,10 +1105,22 @@ under the License.
                 <version>${nimbusds.version}</version>
             </dependency>
 
+            <!--        <dependency>-->
+            <!--            <groupId>org.apache.paimon</groupId>-->
+            <!--            <artifactId>paimon-bundle</artifactId>-->
+            <!--            <version>${paimon.version}</version>-->
+            <!--        </dependency>-->
+
             <dependency>
                 <groupId>org.apache.paimon</groupId>
-                <artifactId>paimon-bundle</artifactId>
-                <version>${paimon.version}</version>
+                <artifactId>paimon-ali-emr-spark-4.0</artifactId>
+                <version>1.1-ali-SNAPSHOT</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.apache.paimon</groupId>
+                        <artifactId>paimon-spark-4.0</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
 
             <dependency>
