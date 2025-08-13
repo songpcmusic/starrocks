@@ -56,6 +56,7 @@ import org.apache.paimon.types.TimestampType;
 import org.apache.paimon.types.TinyIntType;
 import org.apache.paimon.types.VarBinaryType;
 import org.apache.paimon.types.VarCharType;
+import org.apache.paimon.types.VariantType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -561,6 +562,10 @@ public class ColumnTypeConverter {
 
         public Type visit(org.apache.paimon.types.MapType mapType) {
             return new MapType(fromPaimonType(mapType.getKeyType()), fromPaimonType(mapType.getValueType()));
+        }
+
+        public Type visit(VariantType variantType) {
+            return ScalarType.createType(PrimitiveType.JSON);
         }
 
         public Type visit(RowType rowType) {

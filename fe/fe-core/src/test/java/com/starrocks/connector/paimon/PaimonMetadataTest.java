@@ -235,7 +235,7 @@ public class PaimonMetadataTest {
             {
                 paimonNativeCatalog.getTable((Identifier) any);
                 result = paimonSystemTable;
-                paimonSystemTable.latestSnapshot();
+                paimonSystemTable.latestSnapshot().get().id();
                 result = new Exception("Readonly Table tbl1$manifests does not support currentSnapshot.");
                 paimonSystemTable.newReadBuilder();
                 result = readBuilder;
