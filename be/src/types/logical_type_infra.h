@@ -52,6 +52,7 @@ namespace starrocks {
     M(TYPE_TIME)                     \
     M(TYPE_JSON)                     \
     M(TYPE_VARBINARY)                \
+    M(TYPE_VARIANT)                  \
     M(TYPE_BOOLEAN)
 
 #define APPLY_FOR_COMPLEX_TYPE(M) \
@@ -99,7 +100,8 @@ namespace starrocks {
     M(FUNCTION)                         \
     M(BINARY)                           \
     M(VARBINARY)                        \
-    M(JSON)
+    M(JSON)                             \
+    M(VARIANT)
 
 #define _TYPE_DISPATCH_CASE(type) \
     case type:                    \
