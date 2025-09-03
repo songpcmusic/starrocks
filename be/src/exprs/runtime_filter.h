@@ -781,7 +781,7 @@ private:
         } else if constexpr (IsDecimal<CppType>) {
             _min = DecimalV2Value::get_max_decimal();
             _max = DecimalV2Value::get_min_decimal();
-        } else if constexpr (Type != TYPE_JSON) {
+        } else if constexpr (Type != TYPE_JSON && Type != TYPE_VARIANT) {
             // for json vaue, cpp type is JsonValue*
             // but min/max value type is JsonValue
             // and JsonValue needs special serialization handling.
@@ -809,7 +809,7 @@ private:
         } else if constexpr (IsDecimal<CppType>) {
             _max = DecimalV2Value::get_max_decimal();
             _min = DecimalV2Value::get_min_decimal();
-        } else if constexpr (Type != TYPE_JSON) {
+        } else if constexpr (Type != TYPE_JSON && Type != TYPE_VARIANT) {
             // for json vaue, cpp type is JsonValue*
             // but min/max value type is JsonValue
             // and JsonValue needs special serialization handling.
