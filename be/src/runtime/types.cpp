@@ -271,7 +271,8 @@ bool TypeDescriptor::support_join() const {
     if (type == TYPE_ARRAY || type == TYPE_MAP || type == TYPE_STRUCT) {
         return std::all_of(children.begin(), children.end(), [](const TypeDescriptor& t) { return t.support_join(); });
     }
-    return type != TYPE_JSON && type != TYPE_OBJECT && type != TYPE_PERCENTILE && type != TYPE_HLL;
+    return type != TYPE_JSON && type != TYPE_OBJECT && type != TYPE_PERCENTILE && type != TYPE_HLL &&
+           type != TYPE_VARIANT;
 }
 
 bool TypeDescriptor::support_orderby() const {
@@ -279,7 +280,7 @@ bool TypeDescriptor::support_orderby() const {
         return children[0].support_orderby();
     }
     return type != TYPE_JSON && type != TYPE_OBJECT && type != TYPE_PERCENTILE && type != TYPE_HLL &&
-           type != TYPE_MAP && type != TYPE_STRUCT;
+           type != TYPE_MAP && type != TYPE_STRUCT && type != TYPE_VARIANT;
 }
 
 bool TypeDescriptor::support_groupby() const {
@@ -287,7 +288,8 @@ bool TypeDescriptor::support_groupby() const {
         return std::all_of(children.begin(), children.end(),
                            [](const TypeDescriptor& t) { return t.support_groupby(); });
     }
-    return type != TYPE_JSON && type != TYPE_OBJECT && type != TYPE_PERCENTILE && type != TYPE_HLL;
+    return type != TYPE_JSON && type != TYPE_OBJECT && type != TYPE_PERCENTILE && type != TYPE_HLL &&
+           type != TYPE_VARIANT;
 }
 
 TypeDescriptor TypeDescriptor::from_storage_type_info(TypeInfo* type_info) {
@@ -325,6 +327,7 @@ int TypeDescriptor::get_slot_size() const {
     case TYPE_OBJECT:
     case TYPE_PERCENTILE:
     case TYPE_JSON:
+    case TYPE_VARIANT:
     case TYPE_VARBINARY:
         return sizeof(StringValue);
 

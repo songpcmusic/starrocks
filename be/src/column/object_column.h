@@ -22,6 +22,7 @@
 #include "common/object_pool.h"
 #include "types/bitmap_value.h"
 #include "types/hll.h"
+#include "types/variant_value.h"
 #include "util/json.h"
 #include "util/percentile_value.h"
 
