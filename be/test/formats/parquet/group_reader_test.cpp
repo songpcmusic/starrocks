@@ -445,4 +445,21 @@ TEST_F(GroupReaderTest, TestGetNext) {
     _check_chunk(param, chunk, 8, 4);
 }
 
+TEST_F(GroupReaderTest, VariantColumnReader) {
+    ParquetField field;
+    field.name = "col_variant";
+    field.type = ColumnType::STRUCT;
+
+    TypeDescriptor col_type;
+    col_type.type = LogicalType::TYPE_VARIANT;
+
+    ColumnReaderOptions options;
+    TIcebergSchemaField lake_schema_field;
+    lake_schema_field.name = "col_variant";
+    lake_schema_field.field_id = 1;
+    auto st = ColumnReaderFactory::create(options, &field, col_type, &lake_schema_field);
+    ASSERT_FALSE(st.ok()) << st;
+    std::cout << st.status().message() << "\n";
+}
+
 } // namespace starrocks::parquet
