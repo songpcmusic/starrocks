@@ -90,6 +90,7 @@ set(EXEC_FILES
         ./exec/multi_olap_table_sink_test.cpp
         ./exec/avro_scanner_test.cpp
         ./exec/parquet_scanner_test.cpp
+        ./exec/parquet_schema_builder_test.cpp
         ./exec/repeat_node_test.cpp
         ./exec/sorting_test.cpp
         ./exec/table_function_node_test.cpp
