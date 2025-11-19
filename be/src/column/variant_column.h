@@ -23,11 +23,10 @@
 
 namespace starrocks {
 
-class VariantColumn final
-        : public CowFactory<ColumnFactory<ObjectColumn<VariantValue>, VariantColumn>, VariantColumn, Column> {
+class VariantColumn final : public ColumnFactory<ObjectColumn<VariantValue>, VariantColumn, Column> {
 public:
     using ValueType = VariantValue;
-    using SuperClass = CowFactory<ColumnFactory<ObjectColumn<VariantValue>, VariantColumn>, VariantColumn, Column>;
+    using SuperClass = ColumnFactory<ObjectColumn<VariantValue>, VariantColumn, Column>;
     using BaseClass = VariantColumnBase;
 
     VariantColumn() = default;
@@ -37,12 +36,12 @@ public:
     VariantColumn(VariantColumn&& rhs) noexcept : SuperClass(std::move(rhs)) {}
 
     MutableColumnPtr clone() const override { return BaseClass::clone(); }
-    MutableColumnPtr clone_empty() const override { return this->create(); }
+    MutableColumnPtr clone_empty() const override { return this->create_mutable(); }
 
-    uint32_t serialize(size_t idx, uint8_t* pos) const override;
+    uint32_t serialize(size_t idx, uint8_t* pos) override;
     uint32_t serialize_size(size_t idx) const override;
     void serialize_batch(uint8_t* dst, Buffer<uint32_t>& slice_sizes, size_t chunk_size,
-                         uint32_t max_one_row_size) const override;
+                         uint32_t max_one_row_size) override;
     const uint8_t* deserialize_and_append(const uint8_t* pos) override;
 
     void append_datum(const Datum& datum) override;

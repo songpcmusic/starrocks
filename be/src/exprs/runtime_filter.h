@@ -79,6 +79,7 @@ public:
         TYPE_JSON,      /* 27 */
         TYPE_FUNCTION,  /* 28 */
         TYPE_VARBINARY, /* 28 */
+        TYPE_VARIANT,   /* 29 */
     };
 
     static_assert(sizeof(PrimitiveType) == sizeof(int32_t));

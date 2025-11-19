@@ -257,7 +257,7 @@ public:
         return Status::OK();
     }
 
-    Status read_range(const Range<uint64_t>& range, const Filter* filter, ColumnPtr& dst) override;
+    Status read_range(const Range<uint64_t>& range, const Filter* filter, Column* dst) override;
 
     void get_levels(level_t** def_levels, level_t** rep_levels, size_t* num_levels) override {
         // Use value reader to get levels since it determines nullability
@@ -270,9 +270,9 @@ public:
     }
 
     void collect_column_io_range(std::vector<io::SharedBufferedInputStream::IORange>* ranges, int64_t* end_offset,
-                                 ColumnIOTypeFlags types, bool active) override {
-        _metadata_reader->collect_column_io_range(ranges, end_offset, types, active);
-        _value_reader->collect_column_io_range(ranges, end_offset, types, active);
+                                 ColumnIOType type, bool active) override {
+        _metadata_reader->collect_column_io_range(ranges, end_offset, type, active);
+        _value_reader->collect_column_io_range(ranges, end_offset, type, active);
     }
 
     void select_offset_index(const SparseRange<uint64_t>& range, const uint64_t rg_first_row) override {
