@@ -565,7 +565,7 @@ public class ColumnTypeConverter {
         }
 
         public Type visit(VariantType variantType) {
-            return ScalarType.createType(PrimitiveType.JSON);
+            return ScalarType.createType(PrimitiveType.VARIANT);
         }
 
         public Type visit(RowType rowType) {
