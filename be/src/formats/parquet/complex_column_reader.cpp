@@ -357,23 +357,23 @@ void StructColumnReader::_handle_null_rows(uint8_t* is_nulls, bool* has_null, si
 
 // VariantColumnReader
 
-Status VariantColumnReader::read_range(const Range<uint64_t>& range, const Filter* filter, ColumnPtr& dst) {
+Status VariantColumnReader::read_range(const Range<uint64_t>& range, const Filter* filter, Column* dst) {
     VariantColumn* variant_column = nullptr;
     NullableColumn* nullable_column = nullptr;
     if (dst->is_nullable()) {
-        nullable_column = down_cast<NullableColumn*>(dst.get());
+        nullable_column = down_cast<NullableColumn*>(dst);
         DCHECK(nullable_column->mutable_data_column()->is_variant());
         variant_column = down_cast<VariantColumn*>(nullable_column->mutable_data_column());
     } else {
         DCHECK(dst->is_variant());
         DCHECK(!get_column_parquet_field()->is_nullable);
-        variant_column = down_cast<VariantColumn*>(dst.get());
+        variant_column = down_cast<VariantColumn*>(dst);
     }
 
     ColumnPtr metadata_col = NullableColumn::create(BinaryColumn::create(), NullColumn::create());
     ColumnPtr value_col = NullableColumn::create(BinaryColumn::create(), NullColumn::create());
-    RETURN_IF_ERROR(_metadata_reader->read_range(range, filter, metadata_col));
-    RETURN_IF_ERROR(_value_reader->read_range(range, filter, value_col));
+    RETURN_IF_ERROR(_metadata_reader->read_range(range, filter, metadata_col.get()));
+    RETURN_IF_ERROR(_value_reader->read_range(range, filter, value_col.get()));
 
     auto* metadata_nullable = down_cast<NullableColumn*>(metadata_col.get());
     auto* value_nullable = down_cast<NullableColumn*>(value_col.get());
