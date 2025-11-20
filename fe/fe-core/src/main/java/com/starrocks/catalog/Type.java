@@ -1731,6 +1731,7 @@ public abstract class Type implements Cloneable {
                 // Because mysql does not have a large int type, mysql will treat it as hex after exceeding bigint
             case LARGEINT:
             case JSON:
+            case VARIANT:
                 return CHARSET_UTF8;
             default:
                 return CHARSET_BINARY;
