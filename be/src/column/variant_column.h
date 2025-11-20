@@ -37,6 +37,7 @@ public:
 
     MutableColumnPtr clone() const override { return BaseClass::clone(); }
     MutableColumnPtr clone_empty() const override { return this->create_mutable(); }
+    ColumnPtr clone_shared() const override { return BaseClass::clone_shared(); }
 
     uint32_t serialize(size_t idx, uint8_t* pos) override;
     uint32_t serialize_size(size_t idx) const override;
