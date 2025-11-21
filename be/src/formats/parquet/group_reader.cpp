@@ -298,6 +298,7 @@ Status GroupReader::_create_column_readers() {
     opts.file = _param.file;
     opts.row_group_meta = _row_group_metadata;
     opts.first_row_index = _row_group_first_row;
+
     for (const auto& column : _param.read_cols) {
         ASSIGN_OR_RETURN(ColumnReaderPtr column_reader, _create_column_reader(column));
         _column_readers[column.slot_id()] = std::move(column_reader);
@@ -308,6 +309,7 @@ Status GroupReader::_create_column_readers() {
 StatusOr<ColumnReaderPtr> GroupReader::_create_column_reader(const GroupReaderParam::Column& column) {
     std::unique_ptr<ColumnReader> column_reader = nullptr;
     const auto* schema_node = _param.file_metadata->schema().get_stored_column_by_field_idx(column.idx_in_parquet);
+
     {
         if (column.t_lake_schema_field == nullptr) {
             ASSIGN_OR_RETURN(column_reader,

@@ -233,20 +233,41 @@ private:
 };
 
 // VariantColumnReader handles the reading of Parquet columns that represent variant types.
-// It uses two ScalarColumnReader instances: one for reading metadata (type information)
-// and another for reading the actual variant values.
+// It supports both Standard Variant (metadata + value) and Shredding Variant (metadata + typed_value + value).
 class VariantColumnReader final : public ColumnReader {
 public:
-    // Constructor that accepts pre-built ScalarColumnReader objects
+    // Constructor for Standard Variant (two columns: metadata, value)
     explicit VariantColumnReader(const ParquetField* parquet_field,
                                  std::unique_ptr<ScalarColumnReader>&& metadata_reader,
                                  std::unique_ptr<ScalarColumnReader>&& value_reader)
             : ColumnReader(parquet_field),
               _metadata_reader(std::move(metadata_reader)),
-              _value_reader(std::move(value_reader)) {
+              _value_reader(std::move(value_reader)),
+              _typed_value_reader(nullptr),
+              _typed_value_type(TYPE_UNKNOWN) {
         // Both readers must be non-null for VariantColumnReader to function correctly
         DCHECK(_metadata_reader != nullptr) << "VariantColumnReader: metadata reader cannot be null";
         DCHECK(_value_reader != nullptr) << "VariantColumnReader: value reader cannot be null";
+    }
+
+    // Constructor for Shredding Variant (three columns: metadata, typed_value, value)
+    explicit VariantColumnReader(const ParquetField* parquet_field,
+                                 std::unique_ptr<ScalarColumnReader>&& metadata_reader,
+                                 std::unique_ptr<ColumnReader>&& typed_value_reader,
+                                 LogicalType typed_value_type,
+                                 std::unique_ptr<ScalarColumnReader>&& value_reader,
+                                 std::vector<std::string> struct_field_names = {},
+                                 std::vector<LogicalType> struct_field_types = {})
+            : ColumnReader(parquet_field),
+              _metadata_reader(std::move(metadata_reader)),
+              _value_reader(std::move(value_reader)),
+              _typed_value_reader(std::move(typed_value_reader)),
+              _typed_value_type(typed_value_type),
+              _struct_field_names(std::move(struct_field_names)),
+              _struct_field_types(std::move(struct_field_types)) {
+        DCHECK(_metadata_reader != nullptr) << "VariantColumnReader: metadata reader cannot be null";
+        DCHECK(_value_reader != nullptr) << "VariantColumnReader: value reader cannot be null";
+        DCHECK(_typed_value_reader != nullptr) << "VariantColumnReader: typed_value reader cannot be null for Shredding Variant";
     }
 
     ~VariantColumnReader() override = default;
@@ -254,6 +275,9 @@ public:
     Status prepare() override {
         RETURN_IF_ERROR(_metadata_reader->prepare());
         RETURN_IF_ERROR(_value_reader->prepare());
+        if (_typed_value_reader != nullptr) {
+            RETURN_IF_ERROR(_typed_value_reader->prepare());
+        }
         return Status::OK();
     }
 
@@ -267,22 +291,40 @@ public:
     void set_need_parse_levels(bool need_parse_levels) override {
         _metadata_reader->set_need_parse_levels(need_parse_levels);
         _value_reader->set_need_parse_levels(need_parse_levels);
+        if (_typed_value_reader != nullptr) {
+            _typed_value_reader->set_need_parse_levels(need_parse_levels);
+        }
     }
 
     void collect_column_io_range(std::vector<io::SharedBufferedInputStream::IORange>* ranges, int64_t* end_offset,
                                  ColumnIOType type, bool active) override {
         _metadata_reader->collect_column_io_range(ranges, end_offset, type, active);
         _value_reader->collect_column_io_range(ranges, end_offset, type, active);
+        if (_typed_value_reader != nullptr) {
+            _typed_value_reader->collect_column_io_range(ranges, end_offset, type, active);
+        }
     }
 
     void select_offset_index(const SparseRange<uint64_t>& range, const uint64_t rg_first_row) override {
         _metadata_reader->select_offset_index(range, rg_first_row);
         _value_reader->select_offset_index(range, rg_first_row);
+        if (_typed_value_reader != nullptr) {
+            _typed_value_reader->select_offset_index(range, rg_first_row);
+        }
     }
+
+    // Check if this reader is for Shredding Variant
+    bool is_shredding_variant() const { return _typed_value_reader != nullptr; }
 
 private:
     std::unique_ptr<ScalarColumnReader> _metadata_reader;
     std::unique_ptr<ScalarColumnReader> _value_reader;
+    // Optional typed_value reader for Shredding Variant support
+    std::unique_ptr<ColumnReader> _typed_value_reader;
+    LogicalType _typed_value_type;
+    // For STRUCT typed_value, store field names and types
+    std::vector<std::string> _struct_field_names;
+    std::vector<LogicalType> _struct_field_types;
 };
 
 } // namespace starrocks::parquet

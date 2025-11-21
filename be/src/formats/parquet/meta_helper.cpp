@@ -145,7 +145,10 @@ bool LakeMetaHelper::_is_valid_type(const ParquetField* parquet_field, const TIc
         return true;
     }
 
-    if (!parquet_field->has_same_complex_type(*type_descriptor)) {
+    bool has_same_type = parquet_field->has_same_complex_type(*type_descriptor);
+
+    if (!has_same_type) {
+        LOG(WARNING) << "[Variant] LakeMetaHelper::_is_valid_type: complex type mismatch, returning false";
         return false;
     }
 
@@ -160,34 +163,38 @@ bool LakeMetaHelper::_is_valid_type(const ParquetField* parquet_field, const TIc
             }
         }
     } else if (parquet_field->type == ColumnType::STRUCT) {
-        std::unordered_map<int32_t, const TIcebergSchemaField*> field_id_2_lake_schema{};
-        std::unordered_map<int32_t, const TypeDescriptor*> field_id_2_type{};
-        for (const auto& field : field_schema->children) {
-            field_id_2_lake_schema.emplace(field.field_id, &field);
-            for (size_t i = 0; i < type_descriptor->field_names.size(); i++) {
-                if (type_descriptor->field_names[i] == field.name) {
-                    field_id_2_type.emplace(field.field_id, &type_descriptor->children[i]);
-                    break;
+        if (type_descriptor->type == LogicalType::TYPE_VARIANT) {
+            has_valid_child = true;
+        } else {
+            std::unordered_map<int32_t, const TIcebergSchemaField*> field_id_2_lake_schema{};
+            std::unordered_map<int32_t, const TypeDescriptor*> field_id_2_type{};
+            for (const auto& field : field_schema->children) {
+                field_id_2_lake_schema.emplace(field.field_id, &field);
+                for (size_t i = 0; i < type_descriptor->field_names.size(); i++) {
+                    if (type_descriptor->field_names[i] == field.name) {
+                        field_id_2_type.emplace(field.field_id, &type_descriptor->children[i]);
+                        break;
+                    }
                 }
             }
-        }
 
-        // start to check struct type
-        for (const auto& child_parquet_field : parquet_field->children) {
-            auto it = field_id_2_lake_schema.find(child_parquet_field.field_id);
-            if (it == field_id_2_lake_schema.end()) {
-                continue;
-            }
+            // start to check struct type
+            for (const auto& child_parquet_field : parquet_field->children) {
+                auto it = field_id_2_lake_schema.find(child_parquet_field.field_id);
+                if (it == field_id_2_lake_schema.end()) {
+                    continue;
+                }
 
-            auto it_td = field_id_2_type.find(child_parquet_field.field_id);
-            if (it_td == field_id_2_type.end()) {
-                continue;
-            }
+                auto it_td = field_id_2_type.find(child_parquet_field.field_id);
+                if (it_td == field_id_2_type.end()) {
+                    continue;
+                }
 
-            // is compelx type, recursive check it's children
-            if (_is_valid_type(&child_parquet_field, it->second, it_td->second)) {
-                has_valid_child = true;
-                break;
+                // is compelx type, recursive check it's children
+                if (_is_valid_type(&child_parquet_field, it->second, it_td->second)) {
+                    has_valid_child = true;
+                    break;
+                }
             }
         }
     }
@@ -200,6 +207,7 @@ void LakeMetaHelper::prepare_read_columns(const std::vector<HdfsScannerContext::
                                           std::unordered_set<std::string>& existed_column_names) const {
     for (auto& materialized_column : materialized_columns) {
         const std::string& formatted_name = Utils::format_name(materialized_column.name(), _case_sensitive);
+
         auto lake_it = _field_name_2_lake_field.find(formatted_name);
         if (lake_it == _field_name_2_lake_field.end()) {
             continue;
@@ -208,11 +216,18 @@ void LakeMetaHelper::prepare_read_columns(const std::vector<HdfsScannerContext::
         int32_t field_id = lake_it->second->field_id;
 
         int32_t field_idx = _file_metadata->schema().get_field_idx_by_field_id(field_id);
-        if (field_idx < 0) continue;
+        if (field_idx < 0) {
+            continue;
+        }
 
         const ParquetField* parquet_field = _file_metadata->schema().get_stored_column_by_field_id(field_id);
+
         // check is type is invalid
-        if (!_is_valid_type(parquet_field, lake_it->second, &materialized_column.slot_desc->type())) {
+        bool is_valid = _is_valid_type(parquet_field, lake_it->second, &materialized_column.slot_desc->type());
+
+        if (!is_valid) {
+            LOG(WARNING) << "[Variant] LakeMetaHelper: column '" << formatted_name
+                         << "' filtered out because _is_valid_type returned false";
             continue;
         }
 

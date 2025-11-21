@@ -31,6 +31,28 @@ struct VariantUtil {
     static std::string decimal16_to_string(DecimalValue<int128_t> decimal);
 
     static uint8_t primitiveHeader(VariantPrimitiveType primitive);
+
+    // Build Variant Object from field map
+    // Returns metadata and value binary for a Variant Object
+    static Status build_variant_object(const std::map<std::string, std::pair<Datum, LogicalType>>& fields,
+                                       std::string& metadata_out, std::string& value_out);
+
+    // Merge two Variant Objects (typed_value fields + remain_value fields)
+    // Returns merged metadata and value
+    static Status merge_variant_objects(std::string_view typed_metadata, std::string_view typed_value,
+                                        std::string_view remain_metadata, std::string_view remain_value,
+                                        std::string& merged_metadata_out, std::string& merged_value_out);
+
+    // Build Variant Object value from field map using existing metadata
+    // Returns only value binary (metadata is provided separately)
+    static Status build_variant_object_with_metadata(
+            const std::map<std::string, std::pair<Datum, LogicalType>>& fields,
+            std::string_view existing_metadata, std::string& value_out);
+
+    // Merge two Variant Object values that share the same metadata
+    // Returns merged value only (metadata remains the same)
+    static Status merge_variant_objects_same_metadata(std::string_view typed_value, std::string_view remain_value,
+                                                       std::string_view metadata, std::string& merged_value_out);
 };
 
 } // namespace starrocks

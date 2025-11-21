@@ -44,6 +44,9 @@ private:
 
     static StatusOr<ColumnReaderPtr> create_variant_column_reader(const ColumnReaderOptions& opts,
                                                                   const ParquetField* variant_field);
+
+    // Map Parquet physical type to StarRocks LogicalType for typed_value
+    static StatusOr<LogicalType> _map_parquet_type_to_logical_type(const ParquetField* field);
 };
 
 } // namespace starrocks::parquet

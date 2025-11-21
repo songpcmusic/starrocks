@@ -16,10 +16,13 @@
 
 #include <cctz/time_zone.h>
 
+#include <optional>
 #include <string_view>
 
+#include "column/datum.h"
 #include "common/statusor.h"
 #include "fmt/format.h"
+#include "types/logical_type.h"
 #include "util/slice.h"
 
 namespace starrocks {
@@ -38,6 +41,20 @@ public:
      * @return The created VariantValue or an error status.
      */
     static StatusOr<VariantValue> create(const Slice& slice);
+
+    /**
+     * Static factory method to create a Shredded VariantValue.
+     * This is used for Parquet Variant Shredding support.
+     * The actual value reconstruction will be deferred until first access (lazy loading).
+     *
+     * @param metadata Variant metadata
+     * @param typed_value The typed value (primitive type from Parquet typed_value column)
+     * @param typed_value_type Logical type of the typed_value
+     * @param remain_value The remain value binary (from Parquet value column)
+     * @return The created Shredded VariantValue
+     */
+    static VariantValue create_shredded(std::string metadata, Datum typed_value, LogicalType typed_value_type,
+                                       std::string remain_value);
 
     VariantValue(const VariantValue& rhs) = default;
 
@@ -66,16 +83,33 @@ public:
     uint64_t mem_usage() const { return serialize_size(); }
 
     // Convert to a JSON string
-    StatusOr<std::string> to_json(cctz::time_zone timezone = cctz::local_time_zone()) const;
-    std::string to_string() const;
+    StatusOr<std::string> to_json(cctz::time_zone timezone = cctz::local_time_zone());
+    std::string to_string();
 
     std::string get_metadata() const { return _metadata; }
-    std::string get_value() const { return _value; }
+
+    // Get the value, reconstructing from shredded data if necessary (lazy loading)
+    std::string get_value();
+
+    // Check if this is a shredded variant
+    bool is_shredded() const { return _shredded_data.has_value(); }
 
     // Variant value has a maximum size limit of 16MB to prevent excessive memory usage.
     static constexpr uint32_t kMaxVariantSize = 16 * 1024 * 1024;
 
+    // Build Variant value binary from primitive typed_value
+    // This is a public utility method used by VariantUtil to construct Object binary
+    static Status build_variant_value_from_primitive(const Datum& typed_value, LogicalType type, std::string& result);
+
 private:
+    // Internal structure for storing shredded variant data (for lazy reconstruction)
+    struct ShreddedData {
+        Datum typed_value;              // The typed value from Parquet typed_value column
+        LogicalType typed_value_type;   // Logical type of the typed_value
+        std::string remain_value;       // The remain value from Parquet value column
+        bool is_reconstructed = false;  // Whether value has been reconstructed
+    };
+
     static constexpr uint8_t kVersionMask = 0b1111;
     static constexpr uint8_t kSortedStrings = 0b10000;
     static constexpr uint8_t kOffsetSizeMask = 0b11000000;
@@ -83,13 +117,19 @@ private:
     static constexpr uint8_t kHeaderSize = 1;
     static constexpr size_t kMinMetadataSize = 3;
 
+    // Ensure value is reconstructed from shredded data (if needed)
+    Status ensure_value_reconstructed();
+
     // Now directly store strings instead of string_views
     std::string _metadata;
-    std::string _value;
+    mutable std::string _value;
+
+    // Optional shredded data for lazy reconstruction
+    mutable std::optional<ShreddedData> _shredded_data;
 };
 
 // append json string to the stream
-std::ostream& operator<<(std::ostream& os, const VariantValue& json);
+std::ostream& operator<<(std::ostream& os, VariantValue& json);
 
 } // namespace starrocks
 
@@ -97,7 +137,7 @@ std::ostream& operator<<(std::ostream& os, const VariantValue& json);
 template <>
 struct fmt::formatter<starrocks::VariantValue> : formatter<std::string> {
     template <typename FormatContext>
-    auto format(const starrocks::VariantValue& p, FormatContext& ctx) -> decltype(ctx.out()) {
+    auto format(starrocks::VariantValue& p, FormatContext& ctx) -> decltype(ctx.out()) {
         return formatter<std::string>::format(p.to_string(), ctx);
     }
 }; // namespace fmt
