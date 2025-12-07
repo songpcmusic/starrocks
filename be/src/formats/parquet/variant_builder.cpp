@@ -18,6 +18,7 @@
 #include <cstring>
 
 #include "formats/parquet/variant.h"
+#include "runtime/types.h"
 
 namespace starrocks::parquet {
 
@@ -89,6 +90,48 @@ void VariantBuilder::appendBinary(const std::vector<uint8_t>& binary) {
     _writeLittleEndian(binary.size(), 4);
     std::copy(binary.begin(), binary.end(), _writeBuffer.begin() + _writePos);
     _writePos += binary.size();
+}
+
+void VariantBuilder::appendDecimal(int32_t unscaled_value, int precision, int scale) {
+    _checkCapacity(1 + 1 + 4);
+
+    _writeBuffer[_writePos++] = _primitiveHeader(static_cast<int>(VariantPrimitiveType::DECIMAL4));
+    _writeBuffer[_writePos++] = static_cast<uint8_t>(scale);
+    _writeLittleEndian(static_cast<uint64_t>(static_cast<uint32_t>(unscaled_value)), 4);
+}
+
+void VariantBuilder::appendDecimal(int64_t unscaled_value, int precision, int scale) {
+    if (precision <= TypeDescriptor::MAX_DECIMAL4_PRECISION && scale <= TypeDescriptor::MAX_DECIMAL4_PRECISION) {
+        _checkCapacity(1 + 1 + 4);
+        _writeBuffer[_writePos++] = _primitiveHeader(static_cast<int>(VariantPrimitiveType::DECIMAL4));
+        _writeBuffer[_writePos++] = static_cast<uint8_t>(scale);
+        _writeLittleEndian(static_cast<uint64_t>(static_cast<int32_t>(unscaled_value)), 4);
+    } else {
+        _checkCapacity(1 + 1 + 8);
+        _writeBuffer[_writePos++] = _primitiveHeader(static_cast<int>(VariantPrimitiveType::DECIMAL8));
+        _writeBuffer[_writePos++] = static_cast<uint8_t>(scale);
+        _writeLittleEndian(static_cast<uint64_t>(unscaled_value), 8);
+    }
+}
+
+void VariantBuilder::appendDecimal(int128_t unscaled_value, int precision, int scale) {
+    if (precision <= TypeDescriptor::MAX_DECIMAL4_PRECISION && scale <= TypeDescriptor::MAX_DECIMAL4_PRECISION) {
+        _checkCapacity(1 + 1 + 4);
+        _writeBuffer[_writePos++] = _primitiveHeader(static_cast<int>(VariantPrimitiveType::DECIMAL4));
+        _writeBuffer[_writePos++] = static_cast<uint8_t>(scale);
+        _writeLittleEndian(static_cast<uint64_t>(static_cast<int32_t>(unscaled_value)), 4);
+    } else if (precision <= TypeDescriptor::MAX_DECIMAL8_PRECISION && scale <= TypeDescriptor::MAX_DECIMAL8_PRECISION) {
+        _checkCapacity(1 + 1 + 8);
+        _writeBuffer[_writePos++] = _primitiveHeader(static_cast<int>(VariantPrimitiveType::DECIMAL8));
+        _writeBuffer[_writePos++] = static_cast<uint8_t>(scale);
+        _writeLittleEndian(static_cast<uint64_t>(static_cast<int64_t>(unscaled_value)), 8);
+    } else {
+        _checkCapacity(1 + 1 + 16);
+        _writeBuffer[_writePos++] = _primitiveHeader(static_cast<int>(VariantPrimitiveType::DECIMAL16));
+        _writeBuffer[_writePos++] = static_cast<uint8_t>(scale);
+        std::memcpy(&_writeBuffer[_writePos], &unscaled_value, 16);
+        _writePos += 16;
+    }
 }
 
 int VariantBuilder::addKey(const std::string& key) {

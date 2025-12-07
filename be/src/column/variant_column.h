@@ -55,6 +55,9 @@ public:
     void append(const VariantValue& object);
     bool append_nulls(size_t count) override;
 
+    int compare_at(size_t left, size_t right, const Column& rhs, int nan_direction_hint) const override;
+    void fnv_hash(uint32_t* hash, uint32_t from, uint32_t to) const override;
+
     bool is_variant() const override { return true; }
 
     std::string get_name() const override { return "variant"; }

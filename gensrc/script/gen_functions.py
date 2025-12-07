@@ -88,6 +88,8 @@ ${license}
 #include "exprs/grouping_sets_functions.h"
 #include "exprs/es_functions.h"
 #include "exprs/utility_functions.h"
+#include "exprs/json_functions.h"
+#include "exprs/variant_functions.h"
 
 namespace starrocks {
 

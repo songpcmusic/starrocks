@@ -42,6 +42,11 @@ struct PredicateCmpType<TYPE_JSON> {
     using CmpType = JsonValue;
 };
 
+template <>
+struct PredicateCmpType<TYPE_VARIANT> {
+    using CmpType = VariantValue;
+};
+
 // The evaluator for LogicalType
 template <LogicalType ltype>
 using EvalEq = std::equal_to<typename PredicateCmpType<ltype>::CmpType>;

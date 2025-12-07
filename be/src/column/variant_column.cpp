@@ -15,6 +15,7 @@
 #include "variant_column.h"
 
 #include "types/variant_value.h"
+#include "util/hash_util.hpp"
 #include "util/mysql_row_buffer.h"
 
 namespace starrocks {
@@ -86,6 +87,20 @@ bool VariantColumn::append_nulls(size_t count) {
         append(VariantValue::of_null());
     }
     return true;
+}
+
+int VariantColumn::compare_at(size_t left, size_t right, const Column& rhs, int nan_direction_hint) const {
+    VariantValue* x = get_object(left);
+    const VariantValue* y = rhs.get(right).get_variant();
+    return x->compare(*y);
+}
+
+void VariantColumn::fnv_hash(uint32_t* hash, uint32_t from, uint32_t to) const {
+    for (uint32_t i = from; i < to; i++) {
+        VariantValue* variant = get_object(i);
+        int64_t h = variant->hash();
+        hash[i] = HashUtil::fnv_hash(&h, sizeof(h), hash[i]);
+    }
 }
 
 std::string VariantColumn::debug_item(size_t idx) const {

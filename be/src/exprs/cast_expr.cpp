@@ -40,6 +40,7 @@
 #include "exprs/decimal_cast_expr.h"
 #include "exprs/jit/ir_helper.h"
 #include "exprs/unary_function.h"
+#include "formats/parquet/variant_builder.h"
 #include "gutil/casts.h"
 #include "gutil/strings/substitute.h"
 #include "runtime/datetime_value.h"
@@ -48,6 +49,7 @@
 #include "types/hll.h"
 #include "types/large_int_value.h"
 #include "types/logical_type.h"
+#include "types/variant_value.h"
 #include "util/date_func.h"
 #include "util/json.h"
 #include "util/json_converter.h"
@@ -224,6 +226,106 @@ static ColumnPtr cast_from_json_fn(ColumnPtr& column) {
                 THROW_RUNTIME_ERROR_WITH_TYPES_AND_VALUE(FromType, ToType, json->to_string().value_or(""));
             }
             builder.append_null();
+        }
+    }
+
+    return builder.build(column->is_constant());
+}
+
+// Cast any SQL type to VARIANT
+template <LogicalType FromType, LogicalType ToType, bool AllowThrowException>
+static ColumnPtr cast_to_variant_fn(ColumnPtr& column) {
+    using namespace starrocks::parquet;
+    ColumnViewer<FromType> viewer(column);
+    ColumnBuilder<TYPE_VARIANT> builder(viewer.size());
+
+    for (int row = 0; row < viewer.size(); ++row) {
+        if (viewer.is_null(row)) {
+            builder.append_null();
+            continue;
+        }
+
+        // Create VariantBuilder for each value
+        VariantBuilder variant_builder;
+        bool success = false;
+
+        try {
+            if constexpr (lt_is_integer<FromType>) {
+                // Integer types: convert to long (int64_t)
+                // TINYINT, SMALLINT, INT, BIGINT, LARGEINT
+                int64_t value = static_cast<int64_t>(viewer.value(row));
+                variant_builder.appendLong(value);
+                success = true;
+            } else if constexpr (lt_is_float<FromType>) {
+                // Float types: FLOAT or DOUBLE
+                if constexpr (FromType == TYPE_FLOAT) {
+                    variant_builder.appendFloat(viewer.value(row));
+                } else {
+                    variant_builder.appendDouble(viewer.value(row));
+                }
+                success = true;
+            } else if constexpr (lt_is_boolean<FromType>) {
+                // Boolean type
+                variant_builder.appendBoolean(viewer.value(row));
+                success = true;
+            } else if constexpr (lt_is_string<FromType>) {
+                // String types: VARCHAR, CHAR
+                std::string str(viewer.value(row).data, viewer.value(row).size);
+                variant_builder.appendString(str);
+                success = true;
+            } else if constexpr (lt_is_decimal<FromType>) {
+                const auto* data_column = ColumnHelper::get_data_column(column.get());
+
+                auto decimal_column = ColumnHelper::cast_to_raw<FromType>(data_column);
+                int precision = decimal_column->precision();
+                int scale = decimal_column->scale();
+
+                auto unscaled_value = viewer.value(row);
+
+                LOG(INFO) << "cast_to_variant_fn (DECIMAL) at row " << row
+                          << ": FromType=" << type_to_string(FromType)
+                          << ", precision=" << precision
+                          << ", scale=" << scale
+                          << ", unscaled_value=" << unscaled_value;
+
+                variant_builder.appendDecimal(unscaled_value, precision, scale);
+                success = true;
+            } else if constexpr (CastToString::extend_type<RunTimeCppType<FromType>>()) {
+                // Other types (DATE, DATETIME, TIME, etc.): convert to string
+                auto v = viewer.value(row);
+                std::string str = CastToString::apply<RunTimeCppType<FromType>, std::string>(v);
+                variant_builder.appendString(str);
+                success = true;
+            } else {
+                // Unsupported type
+                if constexpr (AllowThrowException) {
+                    THROW_RUNTIME_ERROR_WITH_TYPE(FromType);
+                }
+                success = false;
+            }
+        } catch (const std::exception& e) {
+            if constexpr (AllowThrowException) {
+                throw;
+            }
+            success = false;
+        }
+
+        if (!success) {
+            LOG(WARNING) << "cast_to_variant_fn row " << row
+                    << ": conversion failed for FromType=" << type_to_string(FromType);
+            builder.append_null();
+        } else {
+            // Get the VariantValue from builder
+            VariantValue variant_value = variant_builder.result();
+
+            // 【DEBUG LOG 3】Print CAST created VariantValue
+            LOG(INFO) << "cast_to_variant_fn at row " << row
+                      << ": FromType=" << type_to_string(FromType)
+                      << ", metadata_size=" << variant_value.get_metadata().size()
+                      << ", value_size=" << variant_value.get_value().size()
+                      << ", to_string=" << variant_value.to_string();
+
+            builder.append(std::move(variant_value));
         }
     }
 
@@ -955,6 +1057,7 @@ UNARY_FN_CAST(TYPE_DATE, TYPE_TIME, DateToTime);
 UNARY_FN_CAST(TYPE_DATETIME, TYPE_TIME, DatetimeToTime);
 
 SELF_CAST(TYPE_JSON);
+SELF_CAST(TYPE_VARIANT);
 
 template <LogicalType FromType, LogicalType ToType, bool AllowThrowException>
 static ColumnPtr cast_from_string_to_time_fn(ColumnPtr& column) {
@@ -1091,6 +1194,8 @@ public:
                 return VectorizedUnaryFunction<DecimalToDecimal<OverflowMode::OUTPUT_NULL>>::evaluate<FromType, ToType>(
                         column, to_type.precision, to_type.scale);
             }
+        } else if constexpr (lt_is_decimal<FromType> && ToType == TYPE_VARIANT) {
+            result_column = CastFn<FromType, ToType, AllowThrowException>::cast_fn(column);
         } else if constexpr (lt_is_decimal<FromType>) {
             if (context != nullptr && context->error_if_overflow()) {
                 return VectorizedUnaryFunction<DecimalTo<OverflowMode::REPORT_ERROR>>::evaluate<FromType, ToType>(
@@ -1315,6 +1420,25 @@ CUSTOMIZE_FN_CAST(TYPE_TIME, TYPE_JSON, cast_to_json_fn);
 CUSTOMIZE_FN_CAST(TYPE_DATETIME, TYPE_JSON, cast_to_json_fn);
 CUSTOMIZE_FN_CAST(TYPE_DATE, TYPE_JSON, cast_to_json_fn);
 
+// Cast SQL type to VARIANT
+CUSTOMIZE_FN_CAST(TYPE_NULL, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_INT, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_TINYINT, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_SMALLINT, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_BIGINT, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_LARGEINT, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_BOOLEAN, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_FLOAT, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_DOUBLE, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_CHAR, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_VARCHAR, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_DATE, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_DATETIME, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_TIME, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_DECIMAL32, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_DECIMAL64, TYPE_VARIANT, cast_to_variant_fn);
+CUSTOMIZE_FN_CAST(TYPE_DECIMAL128, TYPE_VARIANT, cast_to_variant_fn);
+
 /**
  * Resolve cast to string
  */
@@ -1497,6 +1621,15 @@ private:
         }                                                                     \
     }
 
+#define CASE_TO_VARIANT(FROM_TYPE, ALLOWTHROWEXCEPTION)                          \
+    case FROM_TYPE: {                                                            \
+        if (ALLOWTHROWEXCEPTION) {                                               \
+            return new VectorizedCastExpr<FROM_TYPE, TYPE_VARIANT, true>(node);  \
+        } else {                                                                 \
+            return new VectorizedCastExpr<FROM_TYPE, TYPE_VARIANT, false>(node); \
+        }                                                                        \
+    }
+
 #define CASE_TO_STRING_FROM(FROM_TYPE, ALLOWTHROWEXCEPTION)                \
     case FROM_TYPE: {                                                      \
         if (ALLOWTHROWEXCEPTION) {                                         \
@@ -1653,6 +1786,37 @@ Expr* VectorizedCastExprFactory::create_primitive_cast(ObjectPool* pool, const T
                 CASE_TO_JSON(TYPE_DATE, allow_throw_exception);
                 CASE_TO_JSON(TYPE_TIME, allow_throw_exception);
                 CASE_TO_JSON(TYPE_DATETIME, allow_throw_exception);
+            default:
+                LOG(WARNING) << "Not support cast " << type_to_string(from_type) << " to " << type_to_string(to_type);
+                return nullptr;
+            }
+        }
+    } else if (from_type == TYPE_VARIANT || to_type == TYPE_VARIANT) {
+        if (from_type == TYPE_VARIANT) {
+            switch (to_type) {
+            default:
+                LOG(WARNING) << "Not support cast " << type_to_string(from_type) << " to " << type_to_string(to_type);
+                return nullptr;
+            }
+        } else {
+            switch (from_type) {
+                CASE_TO_VARIANT(TYPE_BOOLEAN, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_TINYINT, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_SMALLINT, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_INT, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_BIGINT, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_LARGEINT, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_FLOAT, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_DOUBLE, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_VARIANT, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_CHAR, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_VARCHAR, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_DECIMAL32, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_DECIMAL64, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_DECIMAL128, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_DATE, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_TIME, allow_throw_exception);
+                CASE_TO_VARIANT(TYPE_DATETIME, allow_throw_exception);// VARIANT to VARIANT (self-cast)
             default:
                 LOG(WARNING) << "Not support cast " << type_to_string(from_type) << " to " << type_to_string(to_type);
                 return nullptr;

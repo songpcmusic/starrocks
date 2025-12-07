@@ -1319,5 +1319,19 @@ vectorized_functions = [
     [170501, 'named_struct', True, False, 'ANY_STRUCT', ['ANY_ELEMENT', "..."], 'StructFunctions::named_struct'],
 
     # user function
-    [180000, 'is_role_in_session', True, False, 'BOOLEAN', ['VARCHAR'], 'nullptr']
+    [180000, 'is_role_in_session', True, False, 'BOOLEAN', ['VARCHAR'], 'nullptr'],
+
+    # variant functions
+    [190000, "variant_query", False, False, "VARIANT", ["VARIANT", "VARCHAR"], "VariantFunctions::variant_query",
+         "VariantFunctions::variant_path_prepare", "VariantFunctions::variant_path_close"],
+    [190001, "get_variant_bool", False, False, "BOOLEAN", ["VARIANT", "VARCHAR"], "VariantFunctions::get_native_variant_bool",
+             "VariantFunctions::variant_path_prepare", "VariantFunctions::variant_path_close"],
+    [190002, "get_variant_double", False, False, "DOUBLE", ["VARIANT", "VARCHAR"], "VariantFunctions::get_native_variant_double",
+             "VariantFunctions::variant_path_prepare", "VariantFunctions::variant_path_close"],
+    [190003, "get_variant_int", False, False, "INT", ["VARIANT", "VARCHAR"], "VariantFunctions::get_native_variant_int",
+             "VariantFunctions::variant_path_prepare", "VariantFunctions::variant_path_close"],
+    [190004, "get_variant_bigint", False, False, "BIGINT", ["VARIANT", "VARCHAR"], "VariantFunctions::get_native_variant_bigint",
+             "VariantFunctions::variant_path_prepare", "VariantFunctions::variant_path_close"],
+    [190005, "get_variant_string", False, True, "VARCHAR", ["VARIANT", "VARCHAR"], "VariantFunctions::get_native_variant_string",
+             "VariantFunctions::variant_path_prepare", "VariantFunctions::variant_path_close"]
 ]

@@ -251,6 +251,10 @@ public class TypeManager {
             return Type.JSON;
         }
 
+        if (type1.isVariantType() || type2.isVariantType()) {
+            return Type.VARIANT;
+        }
+
         if (type1.isDecimalV3() || type2.isDecimalV3()) {
             Type decimalType = type1.isDecimalV3() ? type1 : type2;
             Type otherType = type1.isDecimalV3() ? type2 : type1;

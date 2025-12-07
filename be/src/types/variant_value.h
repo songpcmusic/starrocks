@@ -20,6 +20,7 @@
 
 #include "common/statusor.h"
 #include "fmt/format.h"
+#include "formats/parquet/variant.h"
 #include "util/slice.h"
 
 namespace starrocks {
@@ -49,6 +50,8 @@ public:
 
     VariantValue& operator=(VariantValue&& rhs) noexcept = default;
 
+    static VariantValue of_variant(const Variant& variant);
+
     static VariantValue of_null();
 
     // Load metadata from the variant binary.
@@ -72,6 +75,10 @@ public:
     std::string get_metadata() const { return _metadata; }
     std::string get_value() const { return _value; }
 
+    int compare(const VariantValue& rhs) const;
+    static int compare(const Slice& lhs, const Slice& rhs);
+    int64_t hash() const;
+
     // Variant value has a maximum size limit of 16MB to prevent excessive memory usage.
     static constexpr uint32_t kMaxVariantSize = 16 * 1024 * 1024;
 
@@ -88,8 +95,26 @@ private:
     std::string _value;
 };
 
-// append json string to the stream
 std::ostream& operator<<(std::ostream& os, const VariantValue& json);
+
+inline bool operator==(const VariantValue& lhs, const VariantValue& rhs) {
+    return lhs.compare(rhs) == 0;
+}
+inline bool operator!=(const VariantValue& lhs, const VariantValue& rhs) {
+    return lhs.compare(rhs) != 0;
+}
+inline bool operator<(const VariantValue& lhs, const VariantValue& rhs) {
+    return lhs.compare(rhs) < 0;
+}
+inline bool operator<=(const VariantValue& lhs, const VariantValue& rhs) {
+    return lhs.compare(rhs) <= 0;
+}
+inline bool operator>(const VariantValue& lhs, const VariantValue& rhs) {
+    return lhs.compare(rhs) > 0;
+}
+inline bool operator>=(const VariantValue& lhs, const VariantValue& rhs) {
+    return lhs.compare(rhs) >= 0;
+}
 
 } // namespace starrocks
 
@@ -101,3 +126,97 @@ struct fmt::formatter<starrocks::VariantValue> : formatter<std::string> {
         return formatter<std::string>::format(p.to_string(), ctx);
     }
 }; // namespace fmt
+
+namespace std {
+
+DIAGNOSTIC_PUSH
+DIAGNOSTIC_IGNORE("-Wunused-value")
+template <>
+struct less<starrocks::VariantValue> {
+    bool operator()(const starrocks::VariantValue& lhs, const starrocks::VariantValue& rhs) const {
+        return lhs.compare(rhs) < 0;
+    }
+
+    bool operator()(const starrocks::VariantValue* lhs, const starrocks::VariantValue* rhs) const {
+        return lhs->compare(*rhs) < 0;
+    }
+
+    bool operator()(const starrocks::Slice& lhs, const starrocks::Slice& rhs) const {
+        return starrocks::VariantValue::compare(lhs, rhs) < 0;
+    }
+};
+
+template <>
+struct less_equal<starrocks::VariantValue> {
+    bool operator()(const starrocks::VariantValue& lhs, const starrocks::VariantValue& rhs) const {
+        return lhs.compare(rhs) <= 0;
+    }
+
+    bool operator()(const starrocks::VariantValue* lhs, const starrocks::VariantValue* rhs) const {
+        return lhs->compare(*rhs) <= 0;
+    }
+
+    bool operator()(const starrocks::Slice& lhs, const starrocks::Slice& rhs) const {
+        return starrocks::VariantValue::compare(lhs, rhs) <= 0;
+    }
+};
+
+template <>
+struct greater<starrocks::VariantValue> {
+    bool operator()(const starrocks::VariantValue& lhs, const starrocks::VariantValue& rhs) const {
+        return lhs.compare(rhs) > 0;
+    }
+    bool operator()(const starrocks::VariantValue* lhs, const starrocks::VariantValue* rhs) const {
+        return lhs->compare(*rhs) > 0;
+    }
+
+    bool operator()(const starrocks::Slice& lhs, const starrocks::Slice& rhs) const {
+        return starrocks::VariantValue::compare(lhs, rhs) > 0;
+    }
+};
+template <>
+struct greater_equal<starrocks::VariantValue> {
+    bool operator()(const starrocks::VariantValue& lhs, const starrocks::VariantValue& rhs) const {
+        return lhs.compare(rhs) >= 0;
+    }
+
+    bool operator()(const starrocks::VariantValue* lhs, const starrocks::VariantValue* rhs) const {
+        return lhs->compare(*rhs) >= 0;
+    }
+
+    bool operator()(const starrocks::Slice& lhs, const starrocks::Slice& rhs) const {
+        return starrocks::VariantValue::compare(lhs, rhs) >= 0;
+    }
+};
+template <>
+struct equal_to<starrocks::VariantValue> {
+    bool operator()(const starrocks::VariantValue& lhs, const starrocks::VariantValue& rhs) const {
+        return lhs.compare(rhs) == 0;
+    }
+
+    bool operator()(const starrocks::VariantValue* lhs, const starrocks::VariantValue* rhs) const {
+        return lhs->compare(*rhs) == 0;
+    }
+
+    bool operator()(const starrocks::Slice& lhs, const starrocks::Slice& rhs) const {
+        return starrocks::VariantValue::compare(lhs, rhs) == 0;
+    }
+};
+template <>
+struct not_equal_to<starrocks::VariantValue> {
+    bool operator()(const starrocks::VariantValue& lhs, const starrocks::VariantValue& rhs) const {
+        return lhs.compare(rhs) != 0;
+    }
+
+    bool operator()(const starrocks::VariantValue* lhs, const starrocks::VariantValue* rhs) const {
+        return lhs->compare(*rhs) != 0;
+    }
+
+    bool operator()(const starrocks::Slice& lhs, const starrocks::Slice& rhs) const {
+        return starrocks::VariantValue::compare(lhs, rhs) != 0;
+    }
+};
+
+DIAGNOSTIC_POP
+
+} // namespace std
