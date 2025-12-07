@@ -172,27 +172,62 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create_variant_column_reader(cons
 
     int metadata_index = -1;
     int value_index = -1;
+    int typed_value_index = -1;
+
     for (size_t i = 0; i < variant_field->children.size(); ++i) {
         const auto& child = variant_field->children[i];
         if (child.name == "metadata") {
             metadata_index = i;
         } else if (child.name == "value") {
             value_index = i;
+        } else if (child.name == "typed_value") {
+            typed_value_index = i;
         }
     }
+
     if (metadata_index == -1 || value_index == -1) {
         return Status::InvalidArgument("Variant type must have 'metadata' and 'value' fields");
     }
 
     const tparquet::ColumnChunk* column_chunks = opts.row_group_meta->columns.data();
-    // Use pointers to the original ParquetField objects to avoid stack-use-after-return
-    const ParquetField* metadata_field = &variant_field->children[metadata_index];
-    const ParquetField* value_field = &variant_field->children[value_index];
-    auto _metadata_reader = std::make_unique<ScalarColumnReader>(
-            metadata_field, &(column_chunks[metadata_field->physical_column_index]), &TYPE_VARBINARY_DESC, opts);
-    auto _value_reader = std::make_unique<ScalarColumnReader>(
-            value_field, &(column_chunks[value_field->physical_column_index]), &TYPE_VARBINARY_DESC, opts);
-    return std::make_unique<VariantColumnReader>(variant_field, std::move(_metadata_reader), std::move(_value_reader));
+
+    if (typed_value_index != -1) {
+
+        ASSIGN_OR_RETURN(TypeDescriptor type_desc, _infer_type(variant_field));
+
+        auto type_desc_ptr = std::make_unique<TypeDescriptor>(std::move(type_desc));
+
+        std::unique_ptr<ColumnReader> metadata_reader;
+        std::unique_ptr<ColumnReader> value_reader;
+        std::vector<std::unique_ptr<ColumnReader>> typed_value_readers;
+
+        auto variant_schema = _build_variant_schema(*variant_field, *type_desc_ptr, metadata_reader, value_reader, typed_value_readers, opts, true);
+        if (!variant_schema.ok()) {
+            return Status::InternalError(strings::Substitute("Failed to build variant schema: $0",
+                                                            variant_schema.status().message()));
+        }
+
+        auto schema_ptr = std::make_unique<VariantUtil::VariantSchema>(std::move(variant_schema.value()));
+        return std::make_unique<ShreddedVariantColumnReader>(
+            variant_field,
+            std::move(type_desc_ptr),
+            std::move(metadata_reader),
+            std::move(value_reader),
+            std::move(typed_value_readers),
+            std::move(schema_ptr),
+            nullptr  // column_access_path
+        );
+    } else {
+        const ParquetField* metadata_field = &variant_field->children[metadata_index];
+        const ParquetField* value_field = &variant_field->children[value_index];
+
+        auto metadata_reader = std::make_unique<ScalarColumnReader>(
+                metadata_field, &(column_chunks[metadata_field->physical_column_index]), &TYPE_VARBINARY_DESC, opts);
+        auto value_reader = std::make_unique<ScalarColumnReader>(
+                value_field, &(column_chunks[value_field->physical_column_index]), &TYPE_VARBINARY_DESC, opts);
+
+        return std::make_unique<VariantColumnReader>(variant_field, std::move(metadata_reader), std::move(value_reader));
+    }
 }
 
 void ColumnReaderFactory::get_subfield_pos_with_pruned_type(const ParquetField& field, const TypeDescriptor& col_type,
@@ -300,6 +335,259 @@ bool ColumnReaderFactory::_has_valid_subfield_column_reader(
         }
     }
     return false;
+}
+
+StatusOr<VariantUtil::VariantSchema> ColumnReaderFactory::_build_variant_schema(
+    const ParquetField& field,
+    const TypeDescriptor& type_desc,
+    std::unique_ptr<ColumnReader>& top_metadata_reader,
+    std::unique_ptr<ColumnReader>& top_value_reader,
+    std::vector<std::unique_ptr<ColumnReader>>& typed_value_readers,
+    const ColumnReaderOptions& opts,
+    bool top_level) {
+
+    size_t metadata_column_index = -1;
+    size_t value_column_index = -1;
+    size_t typed_value_column_index = -1;
+
+    ColumnReader* metadata_reader = nullptr;
+    ColumnReader* value_reader = nullptr;
+    ColumnReader* typed_value_reader = nullptr;
+
+    std::unique_ptr<VariantUtil::VariantSchema> variant_schema;
+
+    for (size_t i = 0; i < field.children.size(); ++i) {
+        const auto child = field.children[i];
+        if (child.name == "typed_value") {
+            typed_value_column_index = i;
+            switch (child.type) {
+                case STRUCT: {
+                    std::vector<VariantUtil::VariantSchema::ObjectSchema::FieldSchema> fields;
+                    fields.reserve(child.children.size());
+                    for (size_t j = 0; j < child.children.size(); ++j) {
+                        const auto& sub_field = child.children[j];
+                        switch (sub_field.type) {
+                            case STRUCT: {
+                                auto sub_variant_schema = _build_variant_schema(field.children[i].children[j], type_desc.children[i].children[j], top_metadata_reader, top_value_reader, typed_value_readers, opts, false);
+                                if (!sub_variant_schema.ok()) {
+                                    return sub_variant_schema.status();
+                                }
+
+                                fields.emplace_back();
+                                auto& field_schema = fields.back();
+                                field_schema.field_name = sub_field.name;
+                                field_schema.schema = std::make_unique<VariantUtil::VariantSchema>(std::move(sub_variant_schema.value()));
+                                break;
+                            }
+                            default:
+                                return Status::InvalidArgument("Unsupported sub-field type in STRUCT typed_value");
+                        }
+                    }
+
+                    variant_schema = VariantUtil::VariantSchema::createObject(std::move(fields));
+                    break;
+                }
+                case SCALAR: {
+                    auto scalar_reader = std::make_unique<ScalarColumnReader>(
+                        &field.children[i],
+                        &opts.row_group_meta->columns[field.children[i].physical_column_index],
+                        &type_desc.children[i],
+                        opts
+                    );
+
+                    typed_value_reader = scalar_reader.get();
+                    typed_value_readers.emplace_back(std::move(scalar_reader));
+
+                    variant_schema = VariantUtil::VariantSchema::createScalar(type_desc.children[i].type);
+                    break;
+                }
+                case ARRAY: {
+                    return Status::NotSupported("ARRAY typed_value not yet implemented");
+                }
+                default:
+                    return Status::InvalidArgument("Unsupported typed_value type");
+            }
+        } else if (child.name == "value") {
+            value_column_index = i;
+            if (child.physical_type != tparquet::Type::BYTE_ARRAY) {
+                return Status::InvalidArgument("value field must be BINARY type");
+            }
+
+            auto scalar_reader = std::make_unique<ScalarColumnReader>(
+                &field.children[i],
+                &opts.row_group_meta->columns[field.children[i].physical_column_index],
+                &type_desc.children[i],
+                opts
+            );
+
+            value_reader = scalar_reader.get();
+            if (top_level) {
+                top_value_reader = std::move(scalar_reader);
+            } else {
+                typed_value_readers.emplace_back(std::move(scalar_reader));
+            }
+        } else if (child.name == "metadata") {
+            if (!top_level) {
+                return Status::InvalidArgument("metadata field can only exist at top level");
+            }
+
+            if (child.physical_type != tparquet::Type::BYTE_ARRAY) {
+                return Status::InvalidArgument("metadata field must be BINARY type");
+            }
+
+            metadata_column_index = i;
+
+            auto scalar_reader = std::make_unique<ScalarColumnReader>(
+                &field.children[i],
+                &opts.row_group_meta->columns[field.children[i].physical_column_index],
+                &type_desc.children[i],
+                opts
+            );
+
+            metadata_reader = scalar_reader.get();
+            top_metadata_reader = std::move(scalar_reader);
+        } else {
+            return Status::InvalidArgument(strings::Substitute("Unknown variant field: $0", child.name));
+        }
+    }
+
+    if (!variant_schema) {
+        return Status::InvalidArgument("No valid typed_value field found in variant schema");
+    }
+
+    variant_schema->metadata_column_index = metadata_column_index;
+    variant_schema->value_column_index = value_column_index;
+    variant_schema->typed_value_column_index = typed_value_column_index;
+    variant_schema->metadata_reader = metadata_reader;
+    variant_schema->value_reader = value_reader;
+    variant_schema->typed_value_reader = typed_value_reader;
+
+    return std::move(*variant_schema);
+}
+
+StatusOr<TypeDescriptor> ColumnReaderFactory::_infer_type(const ParquetField* field) {
+    if (field == nullptr) {
+        return Status::InvalidArgument("typed_value_field cannot be null");
+    }
+
+    switch (field->type) {
+        case SCALAR:
+            return _infer_primitive_type(field);
+
+        case ARRAY:
+            return _infer_array_type(field);
+
+        case STRUCT:
+            return _infer_object_type(field);
+
+        default:
+            return Status::NotSupported(strings::Substitute("Unsupported typed_value field type: $0",
+                                                           column_type_to_string(field->type)));
+    }
+}
+
+StatusOr<TypeDescriptor> ColumnReaderFactory::_infer_primitive_type(const ParquetField* field) {
+    DCHECK(field->type == ColumnType::SCALAR);
+
+    const auto& schema_element = field->schema_element;
+
+    auto physical_type = field->physical_type;
+
+    switch (physical_type) {
+    case tparquet::Type::BOOLEAN:
+        return TypeDescriptor(TYPE_BOOLEAN);
+        break;
+    case tparquet::Type::FLOAT:
+        return TypeDescriptor(TYPE_FLOAT);
+        break;
+    case tparquet::Type::DOUBLE:
+        return TypeDescriptor(TYPE_DOUBLE);
+        break;
+    case tparquet::Type::INT32:
+        if (schema_element.logicalType.__isset.INTEGER) {
+            return TypeDescriptor(TYPE_INT);
+        } else if (schema_element.logicalType.__isset.DATE) {
+            return TypeDescriptor(TYPE_DATE);
+        } else if (schema_element.logicalType.__isset.TIME) {
+            return TypeDescriptor(TYPE_TIME);
+        } else if (schema_element.logicalType.__isset.DECIMAL) {
+            const auto& decimal = schema_element.logicalType.DECIMAL;
+            return TypeDescriptor::promote_decimal_type(decimal.precision, decimal.scale);
+        } else {
+            return TypeDescriptor(TYPE_INT);
+        }
+        break;
+    case tparquet::Type::INT64:
+        if (schema_element.logicalType.__isset.INTEGER) {
+            return TypeDescriptor(TYPE_BIGINT);
+        } else if (schema_element.logicalType.__isset.TIME) {
+            return TypeDescriptor(TYPE_TIME);
+        } else if (schema_element.logicalType.__isset.TIMESTAMP) {
+            return TypeDescriptor(TYPE_DATETIME);
+        } else if (schema_element.logicalType.__isset.DECIMAL) {
+            const auto& decimal = schema_element.logicalType.DECIMAL;
+            return TypeDescriptor::promote_decimal_type(decimal.precision, decimal.scale);
+        } else {
+            return TypeDescriptor(TYPE_BIGINT);
+        }
+        break;
+    case tparquet::Type::INT96:
+        return TypeDescriptor(TYPE_DATETIME);
+        break;
+    case tparquet::Type::BYTE_ARRAY:
+        if (schema_element.logicalType.__isset.STRING) {
+            return TypeDescriptor::create_varchar_type(TypeDescriptor::MAX_VARCHAR_LENGTH);
+        } else if (schema_element.logicalType.__isset.DECIMAL) {
+            const auto& decimal = schema_element.logicalType.DECIMAL;
+            return TypeDescriptor::promote_decimal_type(decimal.precision, decimal.scale);
+        } else if (schema_element.logicalType.__isset.JSON) {
+            return TypeDescriptor::create_json_type();
+        } else {
+            return TypeDescriptor::create_varbinary_type(TypeDescriptor::MAX_VARCHAR_LENGTH);
+        }
+        break;
+    case tparquet::Type::FIXED_LEN_BYTE_ARRAY: {
+        if (schema_element.logicalType.__isset.DECIMAL) {
+            const auto& decimal = schema_element.logicalType.DECIMAL;
+            return TypeDescriptor::promote_decimal_type(decimal.precision, decimal.scale);
+        } else {
+            return TypeDescriptor::create_varchar_type(TypeDescriptor::MAX_VARCHAR_LENGTH);
+        }
+        break;
+    }
+    default:
+        // Treat unsupported types as varbinary type.
+        return TypeDescriptor::create_varbinary_type(TypeDescriptor::MAX_VARCHAR_LENGTH);
+    }
+}
+
+StatusOr<TypeDescriptor> ColumnReaderFactory::_infer_array_type(const ParquetField* field) {
+    DCHECK(field->type == ColumnType::ARRAY);
+
+    if (field->children.empty()) {
+        return Status::InvalidArgument("Array field must have element type");
+    }
+
+    const ParquetField* element_field = &field->children[0];
+
+    ASSIGN_OR_RETURN(TypeDescriptor element_type, _infer_type(element_field));
+
+    return TypeDescriptor::create_array_type(element_type);
+}
+
+StatusOr<TypeDescriptor> ColumnReaderFactory::_infer_object_type(const ParquetField* field) {
+    DCHECK(field->type == ColumnType::STRUCT);
+
+    std::vector<std::string> field_names;
+    std::vector<TypeDescriptor> field_types;
+
+    for (const auto& child_field : field->children) {
+        field_names.push_back(child_field.name);
+        ASSIGN_OR_RETURN(TypeDescriptor field_type, _infer_type(&child_field));
+        field_types.push_back(field_type);
+    }
+
+    return TypeDescriptor::create_struct_type(field_names, field_types);
 }
 
 } // namespace starrocks::parquet

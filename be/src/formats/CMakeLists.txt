@@ -80,6 +80,7 @@ add_library(Formats STATIC
         parquet/statistics_helper.cpp
         parquet/variant.h
         parquet/variant.cpp
+        parquet/variant_builder.cpp
         disk_range.hpp
         )
 

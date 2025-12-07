@@ -180,6 +180,10 @@ public:
     // returns the value of the field with the given field id
     StatusOr<Variant> get_element_at_index(uint32_t index) const;
 
+    // Get the field at the given index (for OBJECT type)
+    // returns a pair of field key and field value
+    StatusOr<std::pair<std::string_view, Variant>> get_field_at_index(uint32_t index) const;
+
 private:
     uint8_t value_header() const;
     Status validate_basic_type(BasicType type) const;

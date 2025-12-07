@@ -160,34 +160,38 @@ bool LakeMetaHelper::_is_valid_type(const ParquetField* parquet_field, const TIc
             }
         }
     } else if (parquet_field->type == ColumnType::STRUCT) {
-        std::unordered_map<int32_t, const TIcebergSchemaField*> field_id_2_lake_schema{};
-        std::unordered_map<int32_t, const TypeDescriptor*> field_id_2_type{};
-        for (const auto& field : field_schema->children) {
-            field_id_2_lake_schema.emplace(field.field_id, &field);
-            for (size_t i = 0; i < type_descriptor->field_names.size(); i++) {
-                if (type_descriptor->field_names[i] == field.name) {
-                    field_id_2_type.emplace(field.field_id, &type_descriptor->children[i]);
-                    break;
+        if (type_descriptor->type == LogicalType::TYPE_VARIANT) {
+            has_valid_child = true;
+        } else {
+            std::unordered_map<int32_t, const TIcebergSchemaField*> field_id_2_lake_schema{};
+            std::unordered_map<int32_t, const TypeDescriptor*> field_id_2_type{};
+            for (const auto& field : field_schema->children) {
+                field_id_2_lake_schema.emplace(field.field_id, &field);
+                for (size_t i = 0; i < type_descriptor->field_names.size(); i++) {
+                    if (type_descriptor->field_names[i] == field.name) {
+                        field_id_2_type.emplace(field.field_id, &type_descriptor->children[i]);
+                        break;
+                    }
                 }
             }
-        }
 
-        // start to check struct type
-        for (const auto& child_parquet_field : parquet_field->children) {
-            auto it = field_id_2_lake_schema.find(child_parquet_field.field_id);
-            if (it == field_id_2_lake_schema.end()) {
-                continue;
-            }
+            // start to check struct type
+            for (const auto& child_parquet_field : parquet_field->children) {
+                auto it = field_id_2_lake_schema.find(child_parquet_field.field_id);
+                if (it == field_id_2_lake_schema.end()) {
+                    continue;
+                }
 
-            auto it_td = field_id_2_type.find(child_parquet_field.field_id);
-            if (it_td == field_id_2_type.end()) {
-                continue;
-            }
+                auto it_td = field_id_2_type.find(child_parquet_field.field_id);
+                if (it_td == field_id_2_type.end()) {
+                    continue;
+                }
 
-            // is compelx type, recursive check it's children
-            if (_is_valid_type(&child_parquet_field, it->second, it_td->second)) {
-                has_valid_child = true;
-                break;
+                // is compelx type, recursive check it's children
+                if (_is_valid_type(&child_parquet_field, it->second, it_td->second)) {
+                    has_valid_child = true;
+                    break;
+                }
             }
         }
     }
