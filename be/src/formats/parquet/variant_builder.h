@@ -48,6 +48,10 @@ public:
     void appendFloat(float f);
     void appendBinary(const std::vector<uint8_t>& binary);
 
+    void appendDecimal(int32_t unscaled_value, int precision, int scale);
+    void appendDecimal(int64_t unscaled_value, int precision, int scale);
+    void appendDecimal(int128_t unscaled_value, int precision, int scale);
+
     int addKey(const std::string& key);
     int getWritePos() const;
     void finishWritingObject(int start, std::vector<FieldEntry>& fields);
