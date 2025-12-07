@@ -14,10 +14,13 @@
 
 #pragma once
 
+#include <optional>
+#include "column/column_access_path.h"
 #include "formats/parquet/column_reader.h"
 #include "formats/parquet/schema.h"
 #include "scalar_column_reader.h"
 #include "stored_column_reader.h"
+#include "util/variant_util.h"
 
 namespace starrocks::parquet {
 
@@ -283,6 +286,110 @@ public:
 private:
     std::unique_ptr<ScalarColumnReader> _metadata_reader;
     std::unique_ptr<ScalarColumnReader> _value_reader;
+};
+
+class ShreddedVariantColumnReader final : public ColumnReader {
+public:
+    // Constructor that accepts child readers for typed_value fields
+    explicit ShreddedVariantColumnReader(const ParquetField* parquet_field,
+                                        std::unique_ptr<TypeDescriptor>&& type_desc,
+                                        std::unique_ptr<ColumnReader>&& metadata_reader,
+                                        std::unique_ptr<ColumnReader>&& value_reader,
+                                        std::vector<std::unique_ptr<ColumnReader>>&& typed_value_readers,
+                                        std::unique_ptr<VariantUtil::VariantSchema>&& variant_schema,
+                                        const ColumnAccessPath* column_access_path = nullptr)
+            : ColumnReader(parquet_field),
+              _type_desc(std::move(type_desc)),
+              _metadata_reader(std::move(metadata_reader)),
+              _value_reader(std::move(value_reader)),
+              _typed_value_readers(std::move(typed_value_readers)),
+              _variant_schema(std::move(variant_schema)),
+              _column_access_path(column_access_path) {
+        DCHECK(_metadata_reader != nullptr) << "ShreddedVariantColumnReader: metadata reader cannot be null";
+        DCHECK(_variant_schema != nullptr) << "ShreddedVariantColumnReader: variant schema cannot be null";
+    }
+
+    ~ShreddedVariantColumnReader() override = default;
+
+    Status prepare() override {
+        RETURN_IF_ERROR(_metadata_reader->prepare());
+
+        if (_value_reader != nullptr) {
+            RETURN_IF_ERROR(_value_reader->prepare());
+        }
+
+        for (auto& reader : _typed_value_readers) {
+            if (reader != nullptr) {
+                RETURN_IF_ERROR(reader->prepare());
+            }
+        }
+
+        return Status::OK();
+    }
+
+    Status read_range(const Range<uint64_t>& range, const Filter* filter, Column* dst) override;
+
+    void get_levels(level_t** def_levels, level_t** rep_levels, size_t* num_levels) override {
+        // Use value reader to get levels since it determines nullability
+        _value_reader->get_levels(def_levels, rep_levels, num_levels);
+    }
+
+    void set_need_parse_levels(bool need_parse_levels) override {
+        _metadata_reader->set_need_parse_levels(need_parse_levels);
+
+        if (_value_reader != nullptr) {
+            _value_reader->set_need_parse_levels(need_parse_levels);
+        }
+
+        for (auto& reader : _typed_value_readers) {
+            if (reader != nullptr) {
+                reader->set_need_parse_levels(need_parse_levels);
+            }
+        }
+    }
+
+    void collect_column_io_range(std::vector<io::SharedBufferedInputStream::IORange>* ranges, int64_t* end_offset,
+                                 ColumnIOType type, bool active) override {
+        _metadata_reader->collect_column_io_range(ranges, end_offset, type, active);
+
+        if (_value_reader != nullptr) {
+            _value_reader->collect_column_io_range(ranges, end_offset, type, active);
+        }
+
+        for (auto& reader : _typed_value_readers) {
+            if (reader != nullptr) {
+                reader->collect_column_io_range(ranges, end_offset, type, active);
+            }
+        }
+    }
+
+    void select_offset_index(const SparseRange<uint64_t>& range, const uint64_t rg_first_row) override {
+        _metadata_reader->select_offset_index(range, rg_first_row);
+
+        if (_value_reader != nullptr) {
+            _value_reader->select_offset_index(range, rg_first_row);
+        }
+
+        for (auto& reader : _typed_value_readers) {
+            if (reader != nullptr) {
+                reader->select_offset_index(range, rg_first_row);
+            }
+        }
+    }
+
+private:
+    static Status _read(const Range<uint64_t>& range,
+                 const Filter* filter,
+                 StructColumn* struct_column,
+                 const VariantUtil::VariantSchema& schema);
+
+    std::unique_ptr<TypeDescriptor> _type_desc;
+    std::unique_ptr<ColumnReader> _metadata_reader;
+    std::unique_ptr<ColumnReader> _value_reader;
+    std::vector<std::unique_ptr<ColumnReader>> _typed_value_readers;
+    std::unique_ptr<VariantUtil::VariantSchema> _variant_schema;
+
+    const ColumnAccessPath* _column_access_path;
 };
 
 } // namespace starrocks::parquet

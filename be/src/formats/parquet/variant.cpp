@@ -622,4 +622,57 @@ StatusOr<Variant> Variant::get_element_at_index(uint32_t index) const {
     return Variant{_metadata, element_value};
 }
 
+StatusOr<std::pair<std::string_view, Variant>> Variant::get_field_at_index(uint32_t index) const {
+    RETURN_IF_ERROR(validate_basic_type(BasicType::OBJECT));
+
+    auto object_info_result = get_object_info(_value);
+    if (!object_info_result.ok()) {
+        return object_info_result.status();
+    }
+
+    const ObjectInfo& info = object_info_result.value();
+    if (index >= info.num_elements) {
+        return Status::VariantError("Field index out of range: " + std::to_string(index) +
+                                    " >= " + std::to_string(info.num_elements));
+    }
+
+    uint32_t field_id = readLittleEndianUnsigned(
+            _value.data() + info.id_start_offset + index * info.id_size, info.id_size);
+
+    uint32_t current_offset = readLittleEndianUnsigned(
+            _value.data() + info.offset_start_offset + index * info.offset_size, info.offset_size);
+
+    if (info.offset_start_offset + (index + 1) * info.offset_size + info.offset_size > _value.size()) {
+        return Status::VariantError("Reading next_offset would exceed _value bounds: position=" +
+                                    std::to_string(info.offset_start_offset + (index + 1) * info.offset_size + info.offset_size) +
+                                    " > _value.size()=" + std::to_string(_value.size()));
+    }
+
+    uint32_t next_offset = readLittleEndianUnsigned(
+            _value.data() + info.offset_start_offset + (index + 1) * info.offset_size, info.offset_size);
+
+    // Calculate current field length
+    if (next_offset < current_offset) {
+        return Status::VariantError("Invalid offset: next_offset (" + std::to_string(next_offset) +
+                                    ") < current_offset (" + std::to_string(current_offset) + ")");
+    }
+    uint32_t field_length = next_offset - current_offset;
+
+    auto field_key_result = _metadata.get_key(field_id);
+    if (!field_key_result.ok()) {
+        return field_key_result.status();
+    }
+    std::string_view field_key = field_key_result.value();
+
+    if (info.data_start_offset + current_offset + field_length > _value.size()) {
+        return Status::VariantError("Field data out of bounds: " +
+                                    std::to_string(info.data_start_offset + current_offset + field_length) +
+                                    " > " + std::to_string(_value.size()));
+    }
+
+    const std::string_view field_value = _value.substr(info.data_start_offset + current_offset, field_length);
+
+    return std::make_pair(field_key, Variant{_metadata, field_value});
+}
+
 } // namespace starrocks

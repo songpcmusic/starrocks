@@ -15,8 +15,15 @@
 #pragma once
 #include <cctz/time_zone.h>
 
+#include "column/vectorized_fwd.h"
 #include "formats/parquet/variant.h"
+#include "formats/parquet/column_reader.h"
+#include "formats/parquet/variant_builder.h"
+#include "types/logical_type.h"
 #include "types/variant_value.h"
+#include "velocypack/vpack.h"
+#include <memory>
+#include <unordered_map>
 
 namespace starrocks {
 struct VariantUtil {
@@ -31,6 +38,63 @@ struct VariantUtil {
     static std::string decimal16_to_string(DecimalValue<int128_t> decimal);
 
     static uint8_t primitiveHeader(VariantPrimitiveType primitive);
+
+    struct VariantSchema {
+
+        size_t metadata_column_index = -1;
+        size_t value_column_index = -1;
+        size_t typed_value_column_index = -1;
+
+        parquet::ColumnReader* metadata_reader = nullptr;
+        parquet::ColumnReader* value_reader = nullptr;
+        parquet::ColumnReader* typed_value_reader = nullptr;
+
+        int num_fields = 0;
+
+        struct ScalarSchema;
+        struct ArraySchema;
+        struct ObjectSchema;
+
+        std::unique_ptr<ScalarSchema> scalar_schema;
+        std::unique_ptr<ArraySchema> array_schema;
+        std::unique_ptr<ObjectSchema> object_schema;
+
+        struct ScalarSchema {
+            LogicalType type;
+        };
+
+        struct ArraySchema {
+            std::unique_ptr<VariantSchema> element_schema;
+        };
+
+        struct ObjectSchema {
+            struct FieldSchema {
+                std::string field_name;
+                std::unique_ptr<VariantSchema> schema;
+            };
+            std::vector<FieldSchema> fields;
+            std::unordered_map<std::string, int> field_map;
+
+            int length() const { return static_cast<int>(fields.size()); }
+        };
+
+        static std::unique_ptr<VariantSchema> createScalar(LogicalType type);
+        static std::unique_ptr<VariantSchema> createArray(std::unique_ptr<VariantSchema> element_schema);
+        static std::unique_ptr<VariantSchema> createObject(std::vector<ObjectSchema::FieldSchema> fields);
+    };
+
+    static StatusOr<VariantValue> assembleVariant(
+        size_t row,
+        const StructColumn* variant_column,
+        const VariantSchema& schema);
+
+private:
+    static Status rebuild(
+        size_t row,
+        std::string_view metadata,
+        const StructColumn& column,
+        const VariantSchema& schema,
+        parquet::VariantBuilder& builder);
 };
 
 } // namespace starrocks

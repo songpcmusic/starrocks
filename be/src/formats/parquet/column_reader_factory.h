@@ -14,6 +14,7 @@
 
 #pragma once
 #include "formats/parquet/column_reader.h"
+#include "util/variant_util.h"
 
 namespace starrocks::parquet {
 
@@ -44,6 +45,20 @@ private:
 
     static StatusOr<ColumnReaderPtr> create_variant_column_reader(const ColumnReaderOptions& opts,
                                                                   const ParquetField* variant_field);
+
+    static StatusOr<VariantUtil::VariantSchema> _build_variant_schema(
+        const ParquetField& field,
+        const TypeDescriptor& type_desc,
+        std::unique_ptr<ColumnReader>& top_metadata_reader,
+        std::unique_ptr<ColumnReader>& top_value_reader,
+        std::vector<std::unique_ptr<ColumnReader>>& typed_value_readers,
+        const ColumnReaderOptions& opts,
+        bool top_level);
+
+    static StatusOr<TypeDescriptor> _infer_type(const ParquetField* field);
+    static StatusOr<TypeDescriptor> _infer_primitive_type(const ParquetField* field);
+    static StatusOr<TypeDescriptor> _infer_array_type(const ParquetField* field);
+    static StatusOr<TypeDescriptor> _infer_object_type(const ParquetField* field);
 };
 
 } // namespace starrocks::parquet

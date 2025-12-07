@@ -24,6 +24,7 @@
 #include "gutil/strings/substitute.h"
 #include "types/variant_value.h"
 #include "util/slice.h"
+#include "util/variant_util.h"
 
 namespace starrocks::parquet {
 
@@ -461,6 +462,169 @@ Status VariantColumnReader::read_range(const Range<uint64_t>& range, const Filte
             NullColumn null_column(expected_size, 0);
             nullable_column->mutable_null_column()->swap_column(null_column);
             nullable_column->set_has_null(false);
+        }
+    }
+
+    return Status::OK();
+}
+
+Status ShreddedVariantColumnReader::read_range(const Range<uint64_t>& range, const Filter* filter, Column* dst) {
+
+    VariantColumn* variant_column = nullptr;
+    NullableColumn* nullable_column = nullptr;
+    if (dst->is_nullable()) {
+        nullable_column = down_cast<NullableColumn*>(dst);
+        DCHECK(nullable_column->mutable_data_column()->is_variant());
+        variant_column = down_cast<VariantColumn*>(nullable_column->mutable_data_column());
+    } else {
+        DCHECK(dst->is_variant());
+        DCHECK(!get_column_parquet_field()->is_nullable);
+        variant_column = down_cast<VariantColumn*>(dst);
+    }
+
+    LOG(INFO) << "[ShreddedVariantColumnReader::read_range] type descriptor: " << _type_desc->debug_string();
+
+    auto column = ColumnHelper::create_column(*_type_desc, true);
+
+    NullableColumn* struct_nullable_column = down_cast<NullableColumn*>(column.get());
+    StructColumn* struct_column = down_cast<StructColumn*>(struct_nullable_column->mutable_data_column());
+
+    RETURN_IF_ERROR(_read(range, filter, struct_column, *_variant_schema));
+
+    // Get definition levels to determine which variant groups are null
+    level_t* def_levels = nullptr;
+    level_t* rep_levels = nullptr;
+    size_t num_levels = 0;
+    _metadata_reader->get_levels(&def_levels, &rep_levels, &num_levels);
+    // Use definition levels to determine null values
+    const LevelInfo level_info = _metadata_reader->get_column_parquet_field()->level_info;
+
+    const auto metadata_column = struct_column->fields_column()[_variant_schema->metadata_column_index].get();
+    const auto value_column = struct_column->fields_column()[_variant_schema->value_column_index].get();
+    const auto typed_value_column = struct_column->fields_column()[_variant_schema->typed_value_column_index].get();
+
+    DCHECK_EQ(metadata_column->size(), value_column->size());
+    DCHECK_EQ(metadata_column->size(), typed_value_column->size());
+
+    const size_t expected_size = range.span_size();
+    const size_t actual_rows = metadata_column->size();
+    variant_column->reserve(expected_size);
+
+    auto append_merged_variant = [&](const size_t idx) {
+        auto result = VariantUtil::assembleVariant(idx, struct_column, *_variant_schema);
+
+        if (result.ok()) {
+            variant_column->append(std::move(result.value()));
+        } else {
+            LOG(WARNING) << "Failed to assemble variant at data_idx=" << idx
+                         << ": " << result.status().message()
+                         << ". Appending null instead.";
+            variant_column->append(VariantValue::of_null());
+        }
+
+        return Status::OK();
+    };
+
+    if (def_levels != nullptr && num_levels > 0) {
+        size_t data_idx = 0;
+        for (size_t i = 0; i < expected_size && i < num_levels; ++i) {
+            if (def_levels[i] >= level_info.max_def_level) {
+                if (data_idx < actual_rows) {
+                    RETURN_IF_ERROR(append_merged_variant(data_idx));
+                    data_idx++;
+                } else {
+                    variant_column->append(VariantValue::of_null());
+                }
+            } else {
+                LOG(INFO) << "Appending null value due to insufficient definition level: "
+                          << (def_levels ? def_levels[i] : -1) << " < " << level_info.max_def_level;
+                variant_column->append(VariantValue::of_null());
+            }
+        }
+
+        // If we still have fewer rows than expected, fill with nulls
+        if (size_t current_size = variant_column->size(); current_size < expected_size) {
+            size_t to_fill = expected_size - current_size;
+            variant_column->append_nulls(to_fill);
+        }
+    } else {
+        // Variant group is required, so all rows are non-null
+        for (size_t i = 0; i < actual_rows; ++i) {
+            RETURN_IF_ERROR(append_merged_variant(i));
+        }
+
+        DCHECK_EQ(actual_rows, expected_size);
+        if (actual_rows < expected_size) {
+            size_t to_fill = expected_size - actual_rows;
+            variant_column->append_nulls(to_fill);
+        }
+    }
+
+    // Handle nullable column null flags
+    if (dst->is_nullable()) {
+        DCHECK(nullable_column != nullptr);
+        if (def_levels != nullptr && num_levels > 0) {
+            NullColumn null_column(expected_size);
+            auto& is_nulls = null_column.get_data();
+            bool has_null = false;
+            for (size_t i = 0; i < expected_size && i < num_levels; ++i) {
+                if (def_levels[i] >= level_info.max_def_level) {
+                    is_nulls[i] = 0;
+                } else {
+                    is_nulls[i] = 1;
+                    has_null = true;
+                }
+            }
+
+            for (size_t i = num_levels; i < expected_size; ++i) {
+                is_nulls[i] = 1;
+                has_null = true;
+            }
+
+            nullable_column->mutable_null_column()->swap_column(null_column);
+            nullable_column->set_has_null(has_null);
+        } else {
+            NullColumn null_column(expected_size, 0);
+            nullable_column->mutable_null_column()->swap_column(null_column);
+            nullable_column->set_has_null(false);
+        }
+    }
+
+    return Status::OK();
+}
+
+Status ShreddedVariantColumnReader::_read(const Range<uint64_t>& range,
+                                           const Filter* filter,
+                                           StructColumn* struct_column,
+                                           const VariantUtil::VariantSchema& schema) {
+    auto& fields = struct_column->fields_column();
+
+    if (schema.metadata_reader != nullptr && schema.metadata_column_index != static_cast<size_t>(-1)) {
+        Column* metadata_column = fields[schema.metadata_column_index].get();
+        RETURN_IF_ERROR(schema.metadata_reader->read_range(range, filter, metadata_column));
+    }
+
+    if (schema.value_reader != nullptr && schema.value_column_index != static_cast<size_t>(-1)) {
+        Column* value_column = fields[schema.value_column_index].get();
+        RETURN_IF_ERROR(schema.value_reader->read_range(range, filter, value_column));
+    }
+
+    Column* typed_value_column = fields[schema.typed_value_column_index].get();
+    if (schema.scalar_schema != nullptr) {
+        RETURN_IF_ERROR(schema.typed_value_reader->read_range(range, filter, typed_value_column));
+    } else if (schema.array_schema != nullptr) {
+        RETURN_IF_ERROR(schema.typed_value_reader->read_range(range, filter, typed_value_column));
+    } else if (schema.object_schema != nullptr) {
+        NullableColumn* typed_value_nullable_column = down_cast<NullableColumn*>(typed_value_column);
+        StructColumn* typed_value_struct_column = down_cast<StructColumn*>(typed_value_nullable_column->data_column().get());
+
+        for (size_t i = 0; i < schema.object_schema->fields.size(); ++i) {
+            const auto& field_schema = schema.object_schema->fields[i];
+
+            NullableColumn* field_nullable_column = down_cast<NullableColumn*>(typed_value_struct_column->fields_column()[i].get());
+            StructColumn* field_struct_column = down_cast<StructColumn*>(field_nullable_column->data_column().get());
+
+            RETURN_IF_ERROR(_read(range, filter, field_struct_column, *field_schema.schema));
         }
     }
 
