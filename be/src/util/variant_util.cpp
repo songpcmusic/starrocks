@@ -108,7 +108,30 @@ std::string VariantUtil::decimal16_to_string(DecimalValue<int128_t> decimal) {
 }
 
 void append_quoted_string(std::stringstream& ss, const std::string& str) {
-    ss << '"' << str << '"';
+    ss << '"';
+
+    for (unsigned char c : str) {
+        switch (c) {
+            case '"':   ss << "\\\""; break;
+            case '\\':  ss << "\\\\"; break;
+            case '\b':  ss << "\\b";  break;
+            case '\f':  ss << "\\f";  break;
+            case '\n':  ss << "\\n";  break;
+            case '\r':  ss << "\\r";  break;
+            case '\t':  ss << "\\t";  break;
+            default:
+                if (c < 0x20) {
+                    char buf[7];
+                    snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    ss << buf;
+                } else {
+                    ss << c;
+                }
+                break;
+        }
+    }
+
+    ss << '"';
 }
 
 Status VariantUtil::variant_to_json(std::string_view metadata, std::string_view value, std::stringstream& json_str,
@@ -169,7 +192,7 @@ Status VariantUtil::variant_to_json(std::string_view metadata, std::string_view 
         break;
     }
     case VariantType::STRING: {
-        json_str << *variant.get_string();
+        append_quoted_string(json_str, std::string(*variant.get_string()));
         break;
     }
     case VariantType::BINARY: {
@@ -232,7 +255,8 @@ Status VariantUtil::variant_to_json(std::string_view metadata, std::string_view 
                 return key.status();
             }
 
-            json_str << *key << ":";
+            append_quoted_string(json_str, std::string(*key));
+            json_str << ":";
 
             if (uint32_t next_pos = data_start_offset + offset; next_pos < value.size()) {
                 std::string_view next_value = value.substr(next_pos, value.size() - next_pos);
