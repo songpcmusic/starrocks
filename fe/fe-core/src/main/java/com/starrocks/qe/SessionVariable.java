@@ -368,6 +368,8 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     public static final String CBO_PRUNE_SUBFIELD = "cbo_prune_subfield";
     public static final String CBO_PRUNE_JSON_SUBFIELD = "cbo_prune_json_subfield";
     public static final String CBO_PRUNE_JSON_SUBFIELD_DEPTH = "cbo_prune_json_subfield_depth";
+    public static final String CBO_PRUNE_VARIANT_SUBFIELD = "cbo_prune_variant_subfield";
+    public static final String CBO_PRUNE_VARIANT_SUBFIELD_DEPTH = "cbo_prune_vairant_subfield_depth";
     public static final String CBO_USE_HISTOGRAM_EVALUDATE_LIST_PARTITION =  "cbo_use_histogram_evaluate_list_partition";
     public static final String ENABLE_OPTIMIZER_REWRITE_GROUPINGSETS_TO_UNION_ALL =
             "enable_rewrite_groupingsets_to_union_all";
@@ -1091,6 +1093,12 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
     @VarAttr(name = CBO_PRUNE_JSON_SUBFIELD_DEPTH, flag = VariableMgr.INVISIBLE)
     private int cboPruneJsonSubfieldDepth = 20;
 
+    @VarAttr(name = CBO_PRUNE_VARIANT_SUBFIELD)
+    private boolean cboPruneVariantSubfield = true;
+
+    @VarAttr(name = CBO_PRUNE_VARIANT_SUBFIELD_DEPTH, flag = VariableMgr.INVISIBLE)
+    private int cboPruneVariantSubfieldDepth = 20;
+
     @VarAttr(name = CBO_USE_HISTOGRAM_EVALUDATE_LIST_PARTITION, flag = VariableMgr.INVISIBLE)
     private boolean cboUseHistogramEvaluateListPartition = false;
 
@@ -1621,6 +1629,14 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
         this.cboPruneJsonSubfieldDepth = cboPruneJsonSubfieldDepth;
     }
 
+    public int getCboPruneVariantSubfieldDepth() {
+        return cboPruneVariantSubfieldDepth;
+    }
+
+    public void setCboPruneVariantSubfieldDepth(int cboPruneVariantSubfieldDepth) {
+        this.cboPruneVariantSubfieldDepth = cboPruneVariantSubfieldDepth;
+    }
+
     public boolean isCboUseHistogramEvaluateListPartition() {
         return cboUseHistogramEvaluateListPartition;
     }
@@ -1635,6 +1651,14 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
 
     public void setCboPruneJsonSubfield(boolean cboPruneJsonSubfield) {
         this.cboPruneJsonSubfield = cboPruneJsonSubfield;
+    }
+
+    public boolean isCboPruneVariantSubfield() {
+        return cboPruneVariantSubfield;
+    }
+
+    public void setCboPruneVariantSubfield(boolean cboPruneVariantSubfield) {
+        this.cboPruneVariantSubfield = cboPruneVariantSubfield;
     }
 
     public void setEnableArrayLowCardinalityOptimize(boolean enableArrayLowCardinalityOptimize) {

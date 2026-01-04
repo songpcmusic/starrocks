@@ -35,6 +35,7 @@ public class SubfieldExpressionCollector extends ScalarOperatorVisitor<Void, Voi
     private final List<ScalarOperator> complexExpressions = Lists.newArrayList();
     private Set<String> checkFunctions;
     private final boolean enableJsonCollect;
+    private final boolean enableVariantCollect;
     private boolean forPushDownSubFiled;
 
     public List<ScalarOperator> getComplexExpressions() {
@@ -42,11 +43,12 @@ public class SubfieldExpressionCollector extends ScalarOperatorVisitor<Void, Voi
     }
 
     public SubfieldExpressionCollector() {
-        this(true);
+        this(true, true);
     }
 
-    public SubfieldExpressionCollector(boolean enableJsonCollect) {
+    public SubfieldExpressionCollector(boolean enableJsonCollect, boolean enableVariantCollect) {
         this.enableJsonCollect = enableJsonCollect;
+        this.enableVariantCollect = enableVariantCollect;
         this.checkFunctions = Sets.newHashSet(PruneSubfieldRule.PRUNE_FUNCTIONS);
     }
 
@@ -73,7 +75,7 @@ public class SubfieldExpressionCollector extends ScalarOperatorVisitor<Void, Voi
 
     @Override
     public Void visitVariableReference(ColumnRefOperator variable, Void context) {
-        if (variable.getType().isComplexType() || variable.getType().isJsonType()) {
+        if (variable.getType().isComplexType() || variable.getType().isJsonType() || variable.getType().isVariantType()) {
             complexExpressions.add(variable);
         }
         return null;
@@ -123,6 +125,17 @@ public class SubfieldExpressionCollector extends ScalarOperatorVisitor<Void, Voi
             }
             Type[] args = call.getFunction().getArgs();
             if (args.length <= 1 || !args[0].isJsonType() || !args[1].isStringType()) {
+                return visit(call, context);
+            }
+        }
+
+        if (PruneSubfieldRule.SUPPORT_VARIANT_FUNCTIONS.contains(call.getFnName())) {
+            if (!enableVariantCollect) {
+                return visit(call, context);
+            }
+
+            Type[] args = call.getFunction().getArgs();
+            if (args.length <= 1 || !args[0].isVariantType() || !args[1].isStringType()) {
                 return visit(call, context);
             }
         }
