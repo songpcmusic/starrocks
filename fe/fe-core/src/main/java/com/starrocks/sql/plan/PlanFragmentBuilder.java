@@ -757,7 +757,8 @@ public class PlanFragmentBuilder {
             }
 
             SubfieldExpressionCollector collector = new SubfieldExpressionCollector(
-                    context.getConnectContext().getSessionVariable().isCboPruneJsonSubfield());
+                    context.getConnectContext().getSessionVariable().isCboPruneJsonSubfield(),
+                    context.getConnectContext().getSessionVariable().isCboPruneVariantSubfield());
             scan.getPredicate().accept(collector, null);
 
             List<ColumnAccessPath> paths = Lists.newArrayList();

@@ -163,7 +163,7 @@ public class SubfieldAccessPathNormalizer {
         @Override
         public Optional<AccessPath> visitVariableReference(ColumnRefOperator variable,
                                                            List<Optional<AccessPath>> childrenAccessPaths) {
-            if (variable.getType().isComplexType() || variable.getType().isJsonType()) {
+            if (variable.getType().isComplexType() || variable.getType().isJsonType() || variable.getType().isVariantType()) {
                 return Optional.of(new AccessPath(variable));
             }
             return Optional.empty();
@@ -217,6 +217,22 @@ public class SubfieldAccessPathNormalizer {
                             || FunctionSet.GET_JSON_BOOL.equals(call.getFnName())
                             || FunctionSet.JSON_EXISTS.equals(call.getFnName())) {
                         p.setValueType(Type.JSON);
+                    } else {
+                        p.setValueType(call.getType());
+                    }
+                    return p;
+                });
+            } else if (PruneSubfieldRule.SUPPORT_VARIANT_FUNCTIONS.contains(call.getFnName())
+                    && call.getArguments().size() > 1  && call.getArguments().get(1).isConstantRef()) {
+
+                String path = ((ConstantOperator) call.getArguments().get(1)).getVarchar();
+
+                return childrenAccessPaths.get(0).map(p -> {
+                    List<String> flatPaths = Lists.newArrayList();
+                    boolean isOverflown = formatJsonPath(path, flatPaths);
+                    p.appendFieldNames(flatPaths);
+                    if (isOverflown || FunctionSet.GET_VARIANT_BOOL.equals(call.getFnName())) {
+                        p.setValueType(Type.VARIANT);
                     } else {
                         p.setValueType(call.getType());
                     }
