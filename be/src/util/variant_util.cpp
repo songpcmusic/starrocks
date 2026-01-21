@@ -312,39 +312,28 @@ uint8_t VariantUtil::primitiveHeader(VariantPrimitiveType primitive) {
     return static_cast<uint8_t>(primitive) << 2;
 }
 
-std::unique_ptr<VariantUtil::VariantSchema> VariantUtil::VariantSchema::createScalar(LogicalType type) {
-    auto schema = std::make_unique<VariantSchema>();
-    schema->num_fields = 1;
-
-    schema->scalar_schema = std::make_unique<ScalarSchema>();
-    schema->scalar_schema->type = type;
-
-    return schema;
+std::unique_ptr<VariantUtil::VariantSchema::ScalarSchema> VariantUtil::VariantSchema::createScalar(LogicalType type) {
+    auto scalar_schema = std::make_unique<ScalarSchema>();
+    scalar_schema->type = type;
+    return scalar_schema;
 }
 
-std::unique_ptr<VariantUtil::VariantSchema> VariantUtil::VariantSchema::createArray(std::unique_ptr<VariantSchema> element_schema) {
-    auto schema = std::make_unique<VariantSchema>();
-    schema->num_fields = element_schema->num_fields;
-
-    schema->array_schema = std::make_unique<ArraySchema>();
-    schema->array_schema->element_schema = std::move(element_schema);
-
-    return schema;
+std::unique_ptr<VariantUtil::VariantSchema::ArraySchema> VariantUtil::VariantSchema::createArray(std::unique_ptr<VariantSchema> element_schema) {
+    auto array_schema = std::make_unique<ArraySchema>();
+    array_schema->element_schema = std::move(element_schema);
+    return array_schema;
 }
 
-std::unique_ptr<VariantUtil::VariantSchema> VariantUtil::VariantSchema::createObject(std::vector<ObjectSchema::FieldSchema> fields) {
-    auto schema = std::make_unique<VariantSchema>();
-    schema->num_fields = fields.size();
+std::unique_ptr<VariantUtil::VariantSchema::ObjectSchema> VariantUtil::VariantSchema::createObject(std::vector<ObjectSchema::FieldSchema> fields) {
+    auto object_schema = std::make_unique<ObjectSchema>();
+    object_schema->fields = std::move(fields);
 
-    schema->object_schema = std::make_unique<ObjectSchema>();
-    schema->object_schema->fields = std::move(fields);
-
-    for (size_t i = 0; i < schema->object_schema->fields.size(); i++) {
-        const auto& field = schema->object_schema->fields[i];
-        schema->object_schema->field_map[field.field_name] = static_cast<int>(i);
+    for (size_t i = 0; i < object_schema->fields.size(); i++) {
+        const auto& field = object_schema->fields[i];
+        object_schema->field_map[field.field_name] = static_cast<int>(i);
     }
 
-    return schema;
+    return object_schema;
 }
 
 StatusOr<VariantValue> VariantUtil::assembleVariant(
@@ -386,23 +375,22 @@ Status VariantUtil::rebuild(
                              schema.object_schema ? "OBJECT" : "UNKNOWN";
     LOG(INFO) << "[rebuild] ENTRY: row=" << row
               << ", column.size()=" << column.size()
-              << ", schema=" << schema_type;
+              << ", schema=" << schema_type
+              << ", typed_value_column_index=" << schema.typed_value_column_index
+              << ", value_column_index=" << schema.value_column_index;
 
-    ColumnPtr typed_value_column = column.fields()[schema.typed_value_column_index];
-    ColumnPtr value_column =  column.fields()[schema.value_column_index];
+    ColumnPtr typed_value_column = nullptr;
+    if (schema.typed_value_column_index != static_cast<size_t>(-1)) {
+        typed_value_column = column.fields()[schema.typed_value_column_index];
+    }
 
-    bool has_typed_value = !typed_value_column->is_null(row);
-    bool has_value = !value_column->is_null(row);
+    ColumnPtr value_column = nullptr;
+    if (schema.value_column_index != static_cast<size_t>(-1)) {
+        value_column = column.fields()[schema.value_column_index];
+    }
 
-    LOG(INFO) << "[rebuild] row=" << row
-              << " | typed_value: " << typed_value_column->get_name()
-              << "[" << typed_value_column->size() << "]"
-              << ", has=" << has_typed_value
-              << " | value: " << (value_column ? value_column->get_name() : "null")
-              << "[" << (value_column ? value_column->size() : 0) << "]"
-              << ", has=" << has_value;
+    bool typed_value_is_null = typed_value_column == nullptr || typed_value_column->is_null(row);
 
-    bool typed_value_is_null = typed_value_column->is_null(row);
     if (!typed_value_is_null) {
 
         if (schema.scalar_schema != nullptr) {
@@ -522,8 +510,10 @@ Status VariantUtil::rebuild(
                           << "[" << field_column->size() << "]"
                           << ", fields=" << field_column->fields_column().size();
 
-                bool has_typed_data = !field_column->fields()[field_variant_schema.typed_value_column_index]->is_null(row);
-                bool has_value_data = !field_column->fields()[field_variant_schema.value_column_index]->is_null(row);
+                bool has_typed_data = field_variant_schema.typed_value_column_index != static_cast<size_t>(-1)
+                    && !field_column->fields()[field_variant_schema.typed_value_column_index]->is_null(row);
+                bool has_value_data = field_variant_schema.value_column_index != static_cast<size_t>(-1)
+                    && !field_column->fields()[field_variant_schema.value_column_index]->is_null(row);
 
                 if (has_typed_data || has_value_data) {
                     int id = builder.addKey(field_name);
@@ -602,7 +592,7 @@ Status VariantUtil::rebuild(
     }
 
     if (typed_value_is_null) {
-        if (!value_column->is_null(row)) {
+        if (schema.value_column_index != static_cast<size_t>(-1) && value_column != nullptr && !value_column->is_null(row)) {
             auto* value_nullable_col = down_cast<NullableColumn*>(value_column.get());
             auto* value_binary_col = down_cast<const BinaryColumn*>(value_nullable_col->data_column().get());
             Slice slice = value_binary_col->get_slice(row);
@@ -613,10 +603,8 @@ Status VariantUtil::rebuild(
                        << "\n  row=" << row
                        << "\n  column.size()=" << column.size()
                        << "\n  schema=" << schema_type
-                       << "\n  typed_value: " << typed_value_column->get_name()
-                       << "[" << typed_value_column->size() << "], has=" << has_typed_value
-                       << "\n  value: " << (value_column ? value_column->get_name() : "null")
-                       << "[" << (value_column ? value_column->size() : 0) << "], has=" << has_value
+                       << "\n  typed_value_column_index: " << schema.typed_value_column_index
+                       << "\n  value_column_index: " << schema.value_column_index
                        << "\n  metadata.size()=" << metadata.size();
 
             return Status::InvalidArgument("[VariantUtil::rebuild] Malformed variant: both typed_value and value are null");

@@ -78,9 +78,9 @@ struct VariantUtil {
             int length() const { return static_cast<int>(fields.size()); }
         };
 
-        static std::unique_ptr<VariantSchema> createScalar(LogicalType type);
-        static std::unique_ptr<VariantSchema> createArray(std::unique_ptr<VariantSchema> element_schema);
-        static std::unique_ptr<VariantSchema> createObject(std::vector<ObjectSchema::FieldSchema> fields);
+        static std::unique_ptr<ScalarSchema> createScalar(LogicalType type);
+        static std::unique_ptr<ArraySchema> createArray(std::unique_ptr<VariantSchema> element_schema);
+        static std::unique_ptr<ObjectSchema> createObject(std::vector<ObjectSchema::FieldSchema> fields);
     };
 
     static StatusOr<VariantValue> assembleVariant(

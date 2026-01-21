@@ -354,7 +354,9 @@ StatusOr<VariantUtil::VariantSchema> ColumnReaderFactory::_build_variant_schema(
     ColumnReader* value_reader = nullptr;
     ColumnReader* typed_value_reader = nullptr;
 
-    std::unique_ptr<VariantUtil::VariantSchema> variant_schema;
+    std::unique_ptr<VariantUtil::VariantSchema::ScalarSchema> scalar_schema = nullptr;
+    std::unique_ptr<VariantUtil::VariantSchema::ArraySchema> array_schema = nullptr;
+    std::unique_ptr<VariantUtil::VariantSchema::ObjectSchema> object_schema = nullptr;
 
     for (size_t i = 0; i < field.children.size(); ++i) {
         const auto child = field.children[i];
@@ -384,7 +386,7 @@ StatusOr<VariantUtil::VariantSchema> ColumnReaderFactory::_build_variant_schema(
                         }
                     }
 
-                    variant_schema = VariantUtil::VariantSchema::createObject(std::move(fields));
+                    object_schema = VariantUtil::VariantSchema::createObject(std::move(fields));
                     break;
                 }
                 case SCALAR: {
@@ -398,7 +400,7 @@ StatusOr<VariantUtil::VariantSchema> ColumnReaderFactory::_build_variant_schema(
                     typed_value_reader = scalar_reader.get();
                     typed_value_readers.emplace_back(std::move(scalar_reader));
 
-                    variant_schema = VariantUtil::VariantSchema::createScalar(type_desc.children[i].type);
+                    scalar_schema = VariantUtil::VariantSchema::createScalar(type_desc.children[i].type);
                     break;
                 }
                 case ARRAY: {
@@ -451,16 +453,18 @@ StatusOr<VariantUtil::VariantSchema> ColumnReaderFactory::_build_variant_schema(
         }
     }
 
-    if (!variant_schema) {
-        return Status::InvalidArgument("No valid typed_value field found in variant schema");
-    }
-
+    auto variant_schema = std::make_unique<VariantUtil::VariantSchema>();
     variant_schema->metadata_column_index = metadata_column_index;
     variant_schema->value_column_index = value_column_index;
     variant_schema->typed_value_column_index = typed_value_column_index;
     variant_schema->metadata_reader = metadata_reader;
     variant_schema->value_reader = value_reader;
     variant_schema->typed_value_reader = typed_value_reader;
+
+    variant_schema->num_fields = field.children.size();
+    variant_schema->scalar_schema = std::move(scalar_schema);
+    variant_schema->array_schema = std::move(array_schema);
+    variant_schema->object_schema = std::move(object_schema);
 
     return std::move(*variant_schema);
 }
