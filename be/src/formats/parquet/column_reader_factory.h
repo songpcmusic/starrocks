@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #pragma once
+#include "column/column_access_path.h"
 #include "formats/parquet/column_reader.h"
 #include "util/variant_util.h"
 
@@ -22,12 +23,13 @@ class ColumnReaderFactory {
 public:
     // create a column reader
     static StatusOr<ColumnReaderPtr> create(const ColumnReaderOptions& opts, const ParquetField* field,
-                                            const TypeDescriptor& col_type);
+                                            const TypeDescriptor& col_type, const ColumnAccessPath* column_access_path);
 
     // Create a column reader with iceberg schema
     static StatusOr<ColumnReaderPtr> create(const ColumnReaderOptions& opts, const ParquetField* field,
                                             const TypeDescriptor& col_type,
-                                            const TIcebergSchemaField* lake_schema_field);
+                                            const TIcebergSchemaField* lake_schema_field,
+                                            const ColumnAccessPath* column_access_path);
 
 private:
     // for struct type without schema change
@@ -44,7 +46,8 @@ private:
             const std::map<std::string, std::unique_ptr<ColumnReader>>& children_readers);
 
     static StatusOr<ColumnReaderPtr> create_variant_column_reader(const ColumnReaderOptions& opts,
-                                                                  const ParquetField* variant_field);
+                                                                  const ParquetField* variant_field,
+                                                                  const ColumnAccessPath* column_access_path);
 
     static StatusOr<VariantUtil::VariantSchema> _build_variant_schema(
         const ParquetField& field,

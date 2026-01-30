@@ -22,7 +22,7 @@
 namespace starrocks::parquet {
 
 StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions& opts, const ParquetField* field,
-                                                      const TypeDescriptor& col_type) {
+                                                      const TypeDescriptor& col_type, const ColumnAccessPath* column_access_path) {
     // We will only set a complex type in ParquetField
     if ((field->is_complex_type() || col_type.is_complex_type()) && !field->has_same_complex_type(col_type)) {
         return Status::InternalError(
@@ -31,7 +31,7 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
     }
     if (field->type == ColumnType::ARRAY) {
         ASSIGN_OR_RETURN(ColumnReaderPtr child_reader,
-                         ColumnReaderFactory::create(opts, &field->children[0], col_type.children[0]));
+                         ColumnReaderFactory::create(opts, &field->children[0], col_type.children[0], column_access_path));
         if (child_reader != nullptr) {
             return std::make_unique<ListColumnReader>(field, std::move(child_reader));
         } else {
@@ -43,11 +43,11 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
 
         if (!col_type.children[0].is_unknown_type()) {
             ASSIGN_OR_RETURN(key_reader,
-                             ColumnReaderFactory::create(opts, &(field->children[0]), col_type.children[0]));
+                             ColumnReaderFactory::create(opts, &(field->children[0]), col_type.children[0], column_access_path));
         }
         if (!col_type.children[1].is_unknown_type()) {
             ASSIGN_OR_RETURN(value_reader,
-                             ColumnReaderFactory::create(opts, &field->children[1], col_type.children[1]));
+                             ColumnReaderFactory::create(opts, &field->children[1], col_type.children[1], column_access_path));
         }
 
         if (key_reader != nullptr || value_reader != nullptr) {
@@ -57,7 +57,7 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
         }
     } else if (field->type == ColumnType::STRUCT) {
         if (col_type.type == LogicalType::TYPE_VARIANT) {
-            return create_variant_column_reader(opts, field);
+            return create_variant_column_reader(opts, field, column_access_path);
         }
 
         std::vector<int32_t> subfield_pos(col_type.children.size());
@@ -72,7 +72,7 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
             }
             ASSIGN_OR_RETURN(
                     ColumnReaderPtr child_reader,
-                    ColumnReaderFactory::create(opts, &field->children[subfield_pos[i]], col_type.children[i]));
+                    ColumnReaderFactory::create(opts, &field->children[subfield_pos[i]], col_type.children[i], column_access_path));
             children_readers.emplace(col_type.field_names[i], std::move(child_reader));
         }
 
@@ -90,7 +90,8 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
 
 StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions& opts, const ParquetField* field,
                                                       const TypeDescriptor& col_type,
-                                                      const TIcebergSchemaField* lake_schema_field) {
+                                                      const TIcebergSchemaField* lake_schema_field,
+                                                      const ColumnAccessPath* column_access_path) {
     // We will only set a complex type in ParquetField
     if ((field->is_complex_type() || col_type.is_complex_type()) && !field->has_same_complex_type(col_type)) {
         return Status::InternalError(
@@ -101,7 +102,7 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
     if (field->type == ColumnType::ARRAY) {
         const TIcebergSchemaField* element_schema = &lake_schema_field->children[0];
         ASSIGN_OR_RETURN(ColumnReaderPtr child_reader,
-                         ColumnReaderFactory::create(opts, &field->children[0], col_type.children[0], element_schema));
+                         ColumnReaderFactory::create(opts, &field->children[0], col_type.children[0], element_schema, column_access_path));
         if (child_reader != nullptr) {
             return std::make_unique<ListColumnReader>(field, std::move(child_reader));
         } else {
@@ -116,11 +117,11 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
 
         if (!col_type.children[0].is_unknown_type()) {
             ASSIGN_OR_RETURN(key_reader, ColumnReaderFactory::create(opts, &(field->children[0]), col_type.children[0],
-                                                                     key_lake_schema));
+                                                                     key_lake_schema, column_access_path));
         }
         if (!col_type.children[1].is_unknown_type()) {
             ASSIGN_OR_RETURN(value_reader, ColumnReaderFactory::create(opts, &(field->children[1]),
-                                                                       col_type.children[1], value_lake_schema));
+                                                                       col_type.children[1], value_lake_schema, column_access_path));
         }
 
         if (key_reader != nullptr || value_reader != nullptr) {
@@ -130,7 +131,7 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
         }
     } else if (field->type == ColumnType::STRUCT) {
         if (col_type.type == LogicalType::TYPE_VARIANT) {
-            return create_variant_column_reader(opts, field);
+            return create_variant_column_reader(opts, field, column_access_path);
         }
 
         std::vector<int32_t> subfield_pos(col_type.children.size());
@@ -148,7 +149,7 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
 
             ASSIGN_OR_RETURN(ColumnReaderPtr child_reader,
                              ColumnReaderFactory::create(opts, &field->children[subfield_pos[i]], col_type.children[i],
-                                                         lake_schema_subfield[i]));
+                                                         lake_schema_subfield[i], column_access_path));
             children_readers.emplace(col_type.field_names[i], std::move(child_reader));
         }
 
@@ -165,7 +166,8 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create(const ColumnReaderOptions&
 }
 
 StatusOr<ColumnReaderPtr> ColumnReaderFactory::create_variant_column_reader(const ColumnReaderOptions& opts,
-                                                                            const ParquetField* variant_field) {
+                                                                            const ParquetField* variant_field,
+                                                                            const ColumnAccessPath* column_access_path) {
     DCHECK(opts.row_group_meta != nullptr);
     DCHECK(variant_field->type == ColumnType::STRUCT);
     DCHECK(variant_field->children.size() >= 2);
@@ -215,7 +217,7 @@ StatusOr<ColumnReaderPtr> ColumnReaderFactory::create_variant_column_reader(cons
             std::move(value_reader),
             std::move(typed_value_readers),
             std::move(schema_ptr),
-            nullptr  // column_access_path
+            column_access_path
         );
     } else {
         const ParquetField* metadata_field = &variant_field->children[metadata_index];

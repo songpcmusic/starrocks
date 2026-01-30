@@ -176,6 +176,21 @@ Status HiveDataSource::open(RuntimeState* state) {
     RETURN_IF_ERROR(_init_conjunct_ctxs(state));
     _init_tuples_and_slots(state);
     _init_counter(state);
+
+    // init column access paths
+    if (hdfs_scan_node.__isset.column_access_paths) {
+        for (int i = 0; i < hdfs_scan_node.column_access_paths.size(); ++i) {
+            auto st = ColumnAccessPath::create(hdfs_scan_node.column_access_paths[i], state, state->obj_pool());
+            if (LIKELY(st.ok())) {
+                _column_access_paths.emplace_back(std::move(st.value()));
+            } else {
+                LOG(WARNING) << "Failed to create column access path: "
+                             << hdfs_scan_node.column_access_paths[i].type << "index: " << i
+                             << ", error: " << st.status();
+            }
+        }
+    }
+
     RETURN_IF_ERROR(_init_partition_values());
     if (_filter_by_eval_partition_conjuncts) {
         _no_data = true;
@@ -639,6 +654,8 @@ Status HiveDataSource::_init_scanner(RuntimeState* state) {
     if (scan_range.__isset.paimon_deletion_file && !scan_range.paimon_deletion_file.path.empty()) {
         scanner_params.paimon_deletion_file = std::make_shared<TPaimonDeletionFile>(scan_range.paimon_deletion_file);
     }
+
+    scanner_params.column_access_paths = &_column_access_paths;
 
     // setup options for datacache
     scanner_params.datacache_options = _datacache_options;

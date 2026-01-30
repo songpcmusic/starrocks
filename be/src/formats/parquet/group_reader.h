@@ -90,6 +90,8 @@ struct GroupReaderParam {
 
     // used for pageIndex
     std::vector<ExprContext*> min_max_conjunct_ctxs;
+
+    std::vector<ColumnAccessPathPtr>* column_access_paths = nullptr;
 };
 
 class PageIndexReader;
@@ -131,7 +133,7 @@ private:
     Status _fill_dst_chunk(const ChunkPtr& read_chunk, ChunkPtr* chunk);
 
     Status _create_column_readers();
-    StatusOr<ColumnReaderPtr> _create_column_reader(const GroupReaderParam::Column& column);
+    StatusOr<ColumnReaderPtr> _create_column_reader(const GroupReaderParam::Column& column, ColumnAccessPath* path);
     Status _prepare_column_readers() const;
     ChunkPtr _create_read_chunk(const std::vector<int>& column_indices);
     // Extract dict filter columns and conjuncts

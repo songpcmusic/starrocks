@@ -45,6 +45,10 @@ struct VariantUtil {
         size_t value_column_index = -1;
         size_t typed_value_column_index = -1;
 
+        bool metadata_column_read = false;
+        bool value_column_read = false;
+        bool typed_value_column_read = false;
+
         parquet::ColumnReader* metadata_reader = nullptr;
         parquet::ColumnReader* value_reader = nullptr;
         parquet::ColumnReader* typed_value_reader = nullptr;
@@ -65,6 +69,12 @@ struct VariantUtil {
 
         struct ArraySchema {
             std::unique_ptr<VariantSchema> element_schema;
+
+            std::unique_ptr<ArraySchema> clone() const {
+                auto cloned = std::make_unique<ArraySchema>();
+                if (element_schema) cloned->element_schema = element_schema->clone();
+                return cloned;
+            }
         };
 
         struct ObjectSchema {
@@ -76,7 +86,44 @@ struct VariantUtil {
             std::unordered_map<std::string, int> field_map;
 
             int length() const { return static_cast<int>(fields.size()); }
+
+            std::unique_ptr<ObjectSchema> clone() const {
+                auto cloned = std::make_unique<ObjectSchema>();
+                cloned->fields.reserve(fields.size());
+                for (const auto& f : fields) {
+                    cloned->fields.push_back({
+                        f.field_name,
+                        f.schema ? f.schema->clone() : nullptr
+                    });
+                }
+
+                cloned->field_map.clear();
+                for (int i = 0; i < static_cast<int>(cloned->fields.size()); ++i) {
+                    cloned->field_map[cloned->fields[i].field_name] = i;
+                }
+                return cloned;
+            }
         };
+
+        std::unique_ptr<VariantSchema> clone() const {
+            auto cloned = std::make_unique<VariantSchema>();
+
+            cloned->metadata_column_index = metadata_column_index;
+            cloned->value_column_index = value_column_index;
+            cloned->typed_value_column_index = typed_value_column_index;
+
+            cloned->metadata_reader = metadata_reader;
+            cloned->value_reader = value_reader;
+            cloned->typed_value_reader = typed_value_reader;
+
+            cloned->num_fields = num_fields;
+
+            if (scalar_schema) cloned->scalar_schema = std::make_unique<ScalarSchema>(*scalar_schema);
+            if (array_schema) cloned->array_schema = array_schema->clone();
+            if (object_schema) cloned->object_schema = object_schema->clone();
+
+            return cloned;
+        }
 
         static std::unique_ptr<ScalarSchema> createScalar(LogicalType type);
         static std::unique_ptr<ArraySchema> createArray(std::unique_ptr<VariantSchema> element_schema);

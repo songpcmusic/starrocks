@@ -381,7 +381,13 @@ private:
     static Status _read(const Range<uint64_t>& range,
                  const Filter* filter,
                  StructColumn* struct_column,
-                 const VariantUtil::VariantSchema& schema);
+                 VariantUtil::VariantSchema& schema);
+
+    static Status _read(const Range<uint64_t>& range,
+             const Filter* filter,
+             StructColumn* struct_column,
+             VariantUtil::VariantSchema& schema,
+             const ColumnAccessPath* column_access_path);
 
     std::unique_ptr<TypeDescriptor> _type_desc;
     std::unique_ptr<ColumnReader> _metadata_reader;

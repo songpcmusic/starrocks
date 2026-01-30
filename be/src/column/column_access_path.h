@@ -20,6 +20,7 @@
 
 #include "column/column.h"
 #include "common/status.h"
+#include "formats/parquet/schema.h"
 #include "gen_cpp/PlanNodes_types.h"
 #include "runtime/types.h"
 #include "types/logical_type.h"
@@ -84,6 +85,9 @@ public:
     // segement may have different column schema(because schema change),
     // we need copy one and set the offset of schema, to help column reader find column access path
     StatusOr<std::unique_ptr<ColumnAccessPath>> convert_by_index(const Field* field, uint32_t index);
+
+    StatusOr<std::unique_ptr<ColumnAccessPath>> convert_by_index(const parquet::ParquetField* field,
+        const LogicalType type, uint32_t index);
 
     ColumnAccessPath* get_child(const std::string& path);
 

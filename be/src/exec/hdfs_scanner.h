@@ -222,6 +222,8 @@ struct HdfsScannerParams {
     MORParams mor_params;
 
     int64_t connector_max_split_size = 0;
+
+    std::vector<ColumnAccessPathPtr>* column_access_paths = nullptr;
 };
 
 struct HdfsScannerContext {
@@ -327,6 +329,8 @@ struct HdfsScannerContext {
     Status evaluate_on_conjunct_ctxs_by_slot(ChunkPtr* chunk, Filter* filter);
 
     void merge_split_tasks();
+
+    std::vector<ColumnAccessPathPtr>* column_access_paths = nullptr;
 };
 
 struct OpenFileOptions {

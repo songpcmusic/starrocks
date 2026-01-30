@@ -393,6 +393,7 @@ Status VariantColumnReader::read_range(const Range<uint64_t>& range, const Filte
 
     const size_t expected_size = range.span_size();
     const size_t actual_rows = metadata_column->size();
+    LOG(INFO) << "[VariantColumnReader::read_range] expected_size: " << expected_size << ", actual_rows: " << actual_rows;
     variant_column->reserve(expected_size);
 
     auto append_variant_column = [&](const size_t idx) {
@@ -410,9 +411,13 @@ Status VariantColumnReader::read_range(const Range<uint64_t>& range, const Filte
                     append_variant_column(data_idx);
                     data_idx++;
                 } else {
+                    LOG(WARNING) << "Failed to read variant at data_idx=" << data_idx
+                                 << ". Appending null instead.";
                     variant_column->append(VariantValue::of_null());
                 }
             } else {
+                LOG(WARNING) << "Failed to read variant at data_idx=" << data_idx
+                             << ". Appending null instead.";
                 variant_column->append(VariantValue::of_null());
             }
         }
@@ -465,6 +470,8 @@ Status VariantColumnReader::read_range(const Range<uint64_t>& range, const Filte
         }
     }
 
+    LOG(INFO) << "[VariantColumnReader::read_range] variant column size: " << variant_column->size();
+
     return Status::OK();
 }
 
@@ -489,7 +496,8 @@ Status ShreddedVariantColumnReader::read_range(const Range<uint64_t>& range, con
     NullableColumn* struct_nullable_column = down_cast<NullableColumn*>(column.get());
     StructColumn* struct_column = down_cast<StructColumn*>(struct_nullable_column->mutable_data_column());
 
-    RETURN_IF_ERROR(_read(range, filter, struct_column, *_variant_schema));
+    auto variant_schema = _variant_schema->clone();
+    RETURN_IF_ERROR(_read(range, filter, struct_column, *variant_schema, _column_access_path));
 
     // Get definition levels to determine which variant groups are null
     level_t* def_levels = nullptr;
@@ -499,9 +507,9 @@ Status ShreddedVariantColumnReader::read_range(const Range<uint64_t>& range, con
     // Use definition levels to determine null values
     const LevelInfo level_info = _metadata_reader->get_column_parquet_field()->level_info;
 
-    const auto metadata_column = struct_column->fields_column()[_variant_schema->metadata_column_index].get();
-    const auto value_column = struct_column->fields_column()[_variant_schema->value_column_index].get();
-    const auto typed_value_column = struct_column->fields_column()[_variant_schema->typed_value_column_index].get();
+    const auto metadata_column = struct_column->fields_column()[variant_schema->metadata_column_index].get();
+    const auto value_column = struct_column->fields_column()[variant_schema->value_column_index].get();
+    const auto typed_value_column = struct_column->fields_column()[variant_schema->typed_value_column_index].get();
 
     DCHECK_EQ(metadata_column->size(), value_column->size());
     DCHECK_EQ(metadata_column->size(), typed_value_column->size());
@@ -511,7 +519,9 @@ Status ShreddedVariantColumnReader::read_range(const Range<uint64_t>& range, con
     variant_column->reserve(expected_size);
 
     auto append_merged_variant = [&](const size_t idx) {
-        auto result = VariantUtil::assembleVariant(idx, struct_column, *_variant_schema);
+        auto result = VariantUtil::assembleVariant(idx, struct_column, *variant_schema);
+
+        LOG(INFO) << "rebuild variant:" << result->to_string();
 
         if (result.ok()) {
             variant_column->append(std::move(result.value()));
@@ -596,24 +606,28 @@ Status ShreddedVariantColumnReader::read_range(const Range<uint64_t>& range, con
 Status ShreddedVariantColumnReader::_read(const Range<uint64_t>& range,
                                            const Filter* filter,
                                            StructColumn* struct_column,
-                                           const VariantUtil::VariantSchema& schema) {
+                                           VariantUtil::VariantSchema& schema) {
     auto& fields = struct_column->fields_column();
 
     if (schema.metadata_reader != nullptr && schema.metadata_column_index != static_cast<size_t>(-1)) {
         Column* metadata_column = fields[schema.metadata_column_index].get();
         RETURN_IF_ERROR(schema.metadata_reader->read_range(range, filter, metadata_column));
+        schema.metadata_column_read = true;
     }
 
-    if (schema.value_reader != nullptr && schema.value_column_index != static_cast<size_t>(-1)) {
+    if (schema.value_reader != nullptr && schema.value_column_index != static_cast<size_t>(-1) && !schema.value_column_read) {
         Column* value_column = fields[schema.value_column_index].get();
         RETURN_IF_ERROR(schema.value_reader->read_range(range, filter, value_column));
+        schema.value_column_read = true;
     }
 
     Column* typed_value_column = fields[schema.typed_value_column_index].get();
     if (schema.scalar_schema != nullptr) {
         RETURN_IF_ERROR(schema.typed_value_reader->read_range(range, filter, typed_value_column));
+        schema.typed_value_column_read = true;
     } else if (schema.array_schema != nullptr) {
         RETURN_IF_ERROR(schema.typed_value_reader->read_range(range, filter, typed_value_column));
+        schema.typed_value_column_read = true;
     } else if (schema.object_schema != nullptr) {
         NullableColumn* typed_value_nullable_column = down_cast<NullableColumn*>(typed_value_column);
         StructColumn* typed_value_struct_column = down_cast<StructColumn*>(typed_value_nullable_column->data_column().get());
@@ -626,6 +640,69 @@ Status ShreddedVariantColumnReader::_read(const Range<uint64_t>& range,
 
             RETURN_IF_ERROR(_read(range, filter, field_struct_column, *field_schema.schema));
         }
+
+        schema.typed_value_column_read = true;
+    }
+
+    return Status::OK();
+}
+
+Status ShreddedVariantColumnReader::_read(const Range<uint64_t>& range,
+                                           const Filter* filter,
+                                           StructColumn* struct_column,
+                                           VariantUtil::VariantSchema& schema,
+                                           const ColumnAccessPath* column_access_path) {
+
+    if (column_access_path == nullptr || column_access_path->children().empty()) {
+        return _read(range, filter, struct_column, schema);
+    }
+
+    LOG(INFO) << "  ColumnAccessPath: path=" << column_access_path->path()
+              << ", index=" << column_access_path->index()
+              << ", from_predicate=" << column_access_path->is_from_predicate()
+              << ", path=" << column_access_path->path()
+              << ", absolute_path=" << column_access_path->absolute_path();
+
+    auto& fields = struct_column->fields_column();
+
+    if (schema.metadata_reader != nullptr && schema.metadata_column_index != static_cast<size_t>(-1)) {
+        Column* metadata_column = fields[schema.metadata_column_index].get();
+        RETURN_IF_ERROR(schema.metadata_reader->read_range(range, filter, metadata_column));
+    }
+
+    for (const auto& child_path : column_access_path->children()) {
+
+        bool path_in_typed = true;
+        if (schema.typed_value_column_index != static_cast<size_t>(-1)) {
+            Column* typed_value_column = fields[schema.typed_value_column_index].get();
+            if (schema.object_schema != nullptr) {
+                NullableColumn* typed_value_nullable_column = down_cast<NullableColumn*>(typed_value_column);
+                StructColumn* typed_value_struct_column = down_cast<StructColumn*>(typed_value_nullable_column->data_column().get());
+
+                auto it = schema.object_schema->field_map.find(child_path->path());
+                if (it != schema.object_schema->field_map.end()) {
+                    const auto& field_schema = schema.object_schema->fields[it->second];
+                    NullableColumn* field_nullable_column = down_cast<NullableColumn*>(typed_value_struct_column->fields_column()[it->second].get());
+                    StructColumn* field_struct_column = down_cast<StructColumn*>(field_nullable_column->data_column().get());
+
+                    RETURN_IF_ERROR(_read(range, filter, field_struct_column, *field_schema.schema, child_path.get()));
+                    schema.typed_value_column_read = true;
+                } else {
+                    path_in_typed = false;
+                }
+
+            } else {
+                RETURN_IF_ERROR(schema.typed_value_reader->read_range(range, filter, typed_value_column));
+                schema.typed_value_column_read = true;
+            }
+        }
+
+        if (schema.value_column_index != static_cast<size_t>(-1) && !path_in_typed && !schema.value_column_read) {
+            Column* value_column = fields[schema.value_column_index].get();
+            RETURN_IF_ERROR(schema.value_reader->read_range(range, filter, value_column));
+            schema.value_column_read = true;
+        }
+
     }
 
     return Status::OK();

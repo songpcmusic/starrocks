@@ -75,6 +75,36 @@ Status ColumnAccessPath::init(const std::string& parent_path, const TColumnAcces
         _children.emplace_back(std::move(child_path));
     }
 
+    // Debug log: Print received ColumnAccessPath from FE (only for root node)
+    if (parent_path.empty()) {
+        LOG(INFO) << "[FlatJson Debug] BE received ColumnAccessPath from FE:";
+        LOG(INFO) << "  Path: " << _path;
+        LOG(INFO) << "  Absolute Path: " << _absolute_path;
+        LOG(INFO) << "  Type: " << _type;
+        LOG(INFO) << "  From Predicate: " << _from_predicate;
+        LOG(INFO) << "  Children Count: " << _children.size();
+
+        // Print children tree
+        std::function<void(const ColumnAccessPath*, int)> print_tree =
+            [&](const ColumnAccessPath* node, int depth) {
+                std::string indent(depth * 2, ' ');
+                LOG(INFO) << indent << "└─ " << node->path()
+                          << " (type=" << node->_type
+                          << ", fromPredicate=" << node->_from_predicate
+                          << ", path=" << node->path()
+                          << ", absolutePath=" << node->absolute_path()
+                          << ", value_type=" << node->value_type().debug_string()
+                          << ")";
+                for (const auto& child : node->children()) {
+                    print_tree(child.get(), depth + 1);
+                }
+            };
+
+        for (const auto& child : _children) {
+            print_tree(child.get(), 1);
+        }
+    }
+
     return Status::OK();
 }
 
@@ -96,8 +126,7 @@ StatusOr<ColumnAccessPathPtr> ColumnAccessPath::convert_by_index(const Field* fi
     path->_column_index = index;
     path->_value_type = this->_value_type;
 
-    // json field has none sub-fields, and we only convert the root path, child path find reader by name
-    if (field->type()->type() == LogicalType::TYPE_JSON) {
+    if (field->type()->type() == LogicalType::TYPE_JSON || field->type()->type() == LogicalType::TYPE_VARIANT) {
         // _type must be INDEX
         for (const auto& child : this->_children) {
             ASSIGN_OR_RETURN(auto copy, child->convert_by_index(field, -1));
@@ -155,6 +184,30 @@ StatusOr<ColumnAccessPathPtr> ColumnAccessPath::convert_by_index(const Field* fi
             ASSIGN_OR_RETURN(auto copy, child->convert_by_index(&all_field[i], i));
             path->_children.emplace_back(std::move(copy));
         }
+    }
+
+    return path;
+}
+
+StatusOr<ColumnAccessPathPtr> ColumnAccessPath::convert_by_index(const parquet::ParquetField* field,
+    const LogicalType type, uint32_t index) {
+
+    ColumnAccessPathPtr path = std::make_unique<ColumnAccessPath>();
+    path->_type = this->_type;
+    path->_path = this->_path;
+    path->_from_predicate = this->_from_predicate;
+    path->_absolute_path = this->_absolute_path;
+    path->_column_index = index;
+    path->_value_type = this->_value_type;
+
+    // variant field has none sub-fields, and we only convert the root path, child path find reader by name
+    if (type == LogicalType::TYPE_VARIANT) {
+        // _type must be INDEX
+        for (const auto& child : this->_children) {
+            ASSIGN_OR_RETURN(auto copy, child->convert_by_index(field, type, -1));
+            path->_children.emplace_back(std::move(copy));
+        }
+        return path;
     }
 
     return path;

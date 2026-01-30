@@ -511,8 +511,10 @@ Status VariantUtil::rebuild(
                           << ", fields=" << field_column->fields_column().size();
 
                 bool has_typed_data = field_variant_schema.typed_value_column_index != static_cast<size_t>(-1)
+                    && field_variant_schema.typed_value_column_read
                     && !field_column->fields()[field_variant_schema.typed_value_column_index]->is_null(row);
                 bool has_value_data = field_variant_schema.value_column_index != static_cast<size_t>(-1)
+                    && field_variant_schema.value_column_read
                     && !field_column->fields()[field_variant_schema.value_column_index]->is_null(row);
 
                 if (has_typed_data || has_value_data) {
@@ -539,7 +541,7 @@ Status VariantUtil::rebuild(
                     return Status::Cancelled("Object has no fields");
                 }
 
-                if (!value_column->is_null(row)) {
+                if (schema.value_column_read && !value_column->is_null(row)) {
                     LOG(INFO) << "[rebuild] Entered leftover fields processing";
 
                     auto* value_nullable_col = down_cast<const NullableColumn*>(value_column.get());
@@ -592,7 +594,10 @@ Status VariantUtil::rebuild(
     }
 
     if (typed_value_is_null) {
-        if (schema.value_column_index != static_cast<size_t>(-1) && value_column != nullptr && !value_column->is_null(row)) {
+        if (schema.value_column_index != static_cast<size_t>(-1)
+            && schema.value_column_read
+            && value_column != nullptr
+            && !value_column->is_null(row)) {
             auto* value_nullable_col = down_cast<NullableColumn*>(value_column.get());
             auto* value_binary_col = down_cast<const BinaryColumn*>(value_nullable_col->data_column().get());
             Slice slice = value_binary_col->get_slice(row);

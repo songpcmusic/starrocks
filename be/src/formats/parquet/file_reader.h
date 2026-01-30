@@ -125,6 +125,9 @@ private:
     GroupReaderParam _group_reader_param;
     std::shared_ptr<MetaHelper> _meta_helper = nullptr;
     const std::set<int64_t>* _need_skip_rowids;
+
+    std::vector<ColumnAccessPathPtr> _column_access_paths;
+    Status init_column_access_paths(HdfsScannerContext* ctx);
 };
 
 } // namespace starrocks::parquet

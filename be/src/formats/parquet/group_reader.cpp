@@ -218,9 +218,21 @@ Status GroupReader::get_next(ChunkPtr* chunk, size_t* row_count) {
         _read_chunk->swap_chunk(*active_chunk);
         *row_count = _read_chunk->num_rows();
 
+        LOG(INFO) << "[GroupReader::get_next] Before _fill_dst_chunk, _read_chunk->num_rows()=" << _read_chunk->num_rows()
+                  << ", _read_chunk->num_columns()=" << _read_chunk->num_columns();
+
+        for (size_t i = 0; i < _read_chunk->num_columns(); i++) {
+            auto& col = _read_chunk->columns()[i];
+            LOG(INFO) << "[GroupReader::get_next] _read_chunk column[" << i << "] size=" << col->size()
+                      << ", type=" << col->get_name();
+        }
+
         SCOPED_RAW_TIMER(&_param.stats->group_dict_decode_ns);
         // convert from _read_chunk to chunk.
         RETURN_IF_ERROR(_fill_dst_chunk(_read_chunk, chunk));
+
+        LOG(INFO) << "[GroupReader::get_next] After _fill_dst_chunk, chunk->num_rows()=" << (*chunk)->num_rows()
+                  << ", chunk->num_columns()=" << (*chunk)->num_columns();
         break;
     }
 
@@ -298,24 +310,67 @@ Status GroupReader::_create_column_readers() {
     opts.file = _param.file;
     opts.row_group_meta = _row_group_metadata;
     opts.first_row_index = _row_group_first_row;
+
+    std::unordered_map<ColumnId, ColumnAccessPath*> _column_access_paths;
+    std::unordered_map<ColumnId, ColumnAccessPath*> _predicate_column_access_paths;
+
+    if (_param.column_access_paths != nullptr && !_param.column_access_paths->empty()) {
+        LOG(INFO) << "=== Column Access Paths (size=" << _param.column_access_paths->size() << ") ===";
+
+        for (auto& column_access_path : *_param.column_access_paths) {
+            auto* path = column_access_path.get();
+
+            LOG(INFO) << "  path=" << path->path()
+                      << ", index=" << path->index()
+                      << ", from_predicate=" << path->is_from_predicate()
+                      << ", path=" << path->path()
+                      << ", absolute_path=" << path->absolute_path();
+
+            if (path->is_from_predicate()) {
+                _predicate_column_access_paths[path->index()] = path;
+            } else {
+                _column_access_paths[path->index()] = path;
+            }
+        }
+    } else {
+        LOG(INFO) << "=== Column Access Paths: nullptr or empty ===";
+    }
+
+    LOG(INFO) << "=== Read Columns (size=" << _param.read_cols.size() << ") ===";
+    for (size_t i = 0; i < _param.read_cols.size(); i++) {
+        const auto& col = _param.read_cols[i];
+        LOG(INFO) << "  [" << i << "] idx_in_parquet=" << col.idx_in_parquet
+                  << ", slot_id=" << col.slot_id()
+                  << ", col_name=" << col.slot_desc->col_name()
+                  << ", col_physical_name=" << col.slot_desc->col_physical_name();
+    }
+
     for (const auto& column : _param.read_cols) {
-        ASSIGN_OR_RETURN(ColumnReaderPtr column_reader, _create_column_reader(column));
+
+        ColumnAccessPath* column_access_path = nullptr;
+        auto it = _column_access_paths.find(column.idx_in_parquet);
+        if (it != _column_access_paths.end()) {
+            column_access_path = it->second;
+        }
+
+        ASSIGN_OR_RETURN(ColumnReaderPtr column_reader, _create_column_reader(column, column_access_path));
         _column_readers[column.slot_id()] = std::move(column_reader);
     }
     return Status::OK();
 }
 
-StatusOr<ColumnReaderPtr> GroupReader::_create_column_reader(const GroupReaderParam::Column& column) {
+StatusOr<ColumnReaderPtr> GroupReader::_create_column_reader(const GroupReaderParam::Column& column, ColumnAccessPath* column_access_path) {
     std::unique_ptr<ColumnReader> column_reader = nullptr;
     const auto* schema_node = _param.file_metadata->schema().get_stored_column_by_field_idx(column.idx_in_parquet);
     {
         if (column.t_lake_schema_field == nullptr) {
             ASSIGN_OR_RETURN(column_reader,
-                             ColumnReaderFactory::create(_column_reader_opts, schema_node, column.slot_type()));
+                             ColumnReaderFactory::create(_column_reader_opts, schema_node, column.slot_type(),
+                                                         column_access_path));
         } else {
             ASSIGN_OR_RETURN(column_reader,
                              ColumnReaderFactory::create(_column_reader_opts, schema_node, column.slot_type(),
-                                                         column.t_lake_schema_field));
+                                                         column.t_lake_schema_field, column_access_path));
         }
         if (column_reader == nullptr) {
             // this shouldn't happen but guard
@@ -503,13 +558,28 @@ StatusOr<bool> GroupReader::_filter_chunk_with_dict_filter(ChunkPtr* chunk, Filt
 }
 
 Status GroupReader::_fill_dst_chunk(const ChunkPtr& read_chunk, ChunkPtr* chunk) {
+    LOG(INFO) << "[GroupReader::_fill_dst_chunk] Start, read_chunk->num_rows()=" << read_chunk->num_rows();
+
     read_chunk->check_or_die();
+
     for (const auto& column : _param.read_cols) {
         SlotId slot_id = column.slot_id();
-        RETURN_IF_ERROR(_column_readers[slot_id]->fill_dst_column((*chunk)->get_column_by_slot_id(slot_id),
-                                                                  read_chunk->get_column_by_slot_id(slot_id)));
+        auto src_col = read_chunk->get_column_by_slot_id(slot_id);
+        auto dst_col = (*chunk)->get_column_by_slot_id(slot_id);
+
+        LOG(INFO) << "[GroupReader::_fill_dst_chunk] Processing column slot_id=" << slot_id
+                  << ", col_name=" << column.slot_desc->col_name()
+                  << ", src_col->size()=" << src_col->size()
+                  << ", dst_col->size()=" << dst_col->size();
+
+        RETURN_IF_ERROR(_column_readers[slot_id]->fill_dst_column(dst_col, src_col));
+
+        LOG(INFO) << "[GroupReader::_fill_dst_chunk] After fill_dst_column, dst_col->size()=" << dst_col->size();
     }
+
     read_chunk->check_or_die();
+
+    LOG(INFO) << "[GroupReader::_fill_dst_chunk] End, chunk->num_rows()=" << (*chunk)->num_rows();
     return Status::OK();
 }
 

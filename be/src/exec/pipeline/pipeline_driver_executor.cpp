@@ -184,6 +184,12 @@ void GlobalDriverExecutor::_worker_thread() {
                 LOG(WARNING) << "[Driver] Process error, query_id=" << print_id(driver->query_ctx()->query_id())
                              << ", instance_id=" << print_id(driver->fragment_ctx()->fragment_instance_id())
                              << ", status=" << status;
+
+                LOG(WARNING) << "[Driver] Process error, query_id=" << print_id(driver->query_ctx()->query_id())
+                             << ", instance_id=" << print_id(driver->fragment_ctx()->fragment_instance_id())
+                             << ", status_code=" << status.code()
+                             << ", message=" << status.message()
+                             << ", detailed_message=" << status.detailed_message();
                 driver->runtime_profile()->add_info_string("ErrorMsg", std::string(status.message()));
                 query_ctx->cancel(status);
                 runtime_state->set_is_cancelled(true);

@@ -168,6 +168,8 @@ private:
     bool _has_scan_range_indicate_const_column = false;
     bool _use_partition_column_value_only = false;
 
+    std::vector<ColumnAccessPathPtr> _column_access_paths;
+
     // ======================================
     // The following are profile metrics
     HdfsScanProfile _profile;

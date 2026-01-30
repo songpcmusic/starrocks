@@ -786,6 +786,18 @@ StatusOr<std::unique_ptr<ColumnIterator>> ColumnReader::_new_json_iterator(Colum
         }
     }
 
+    // Debug log: Print received ColumnAccessPath
+    LOG(INFO) << "[FlatJson Debug] ColumnAccessPath in _new_json_iterator:";
+    if (path == nullptr || path->children().empty()) {
+        LOG(INFO) << "  Path is NULL or empty -> Will read WHOLE JSON";
+    } else {
+        LOG(INFO) << "  Target paths (" << target_paths.size() << "):";
+        for (size_t i = 0; i < target_paths.size(); i++) {
+            LOG(INFO) << "    [" << i << "] " << target_paths[i]
+                      << " (type: " << type_to_string(target_types[i]) << ")";
+        }
+    }
+
     if (!_is_flat_json) {
         if (path == nullptr || path->children().empty()) {
             return json_iter;
@@ -825,6 +837,7 @@ StatusOr<std::unique_ptr<ColumnIterator>> ColumnReader::_new_json_iterator(Colum
 
         if (path == nullptr || path->children().empty()) {
             // access whole json
+            LOG(INFO) << "[FlatJson Debug] Creating JsonMergeIterator (read all columns)";
             return create_json_merge_iterator(this, std::move(null_iter), std::move(all_iters), source_paths,
                                               source_types);
         } else {
@@ -836,6 +849,18 @@ StatusOr<std::unique_ptr<ColumnIterator>> ColumnReader::_new_json_iterator(Colum
 
     bool need_remain = false;
     std::set<std::string> check_paths;
+
+    // Debug log: Print available source columns
+    LOG(INFO) << "[FlatJson Debug] Available source columns in storage:";
+    for (size_t i = start; i < end; i++) {
+        LOG(INFO) << "  [" << i << "] " << (*_sub_readers)[i]->name()
+                  << " (" << type_to_string((*_sub_readers)[i]->column_type()) << ")";
+    }
+    if (_has_remain) {
+        LOG(INFO) << "  [remain] remain column exists";
+    }
+    LOG(INFO) << "[FlatJson Debug] Starting prefix matching...";
+
     for (size_t k = 0; k < target_paths.size(); k++) {
         auto& target = target_paths[k];
         size_t i = start;
@@ -848,6 +873,8 @@ StatusOr<std::unique_ptr<ColumnIterator>> ColumnReader::_new_json_iterator(Colum
             // target: b.b2.b3
             // source: b.b2
             if (target == name || target.starts_with(name + ".")) {
+                LOG(INFO) << "  ✓ Match: target[" << target << "] matches source["
+                          << name << "] (exact or target is child)";
                 ASSIGN_OR_RETURN(auto iter, rd->new_iterator());
                 source_paths.emplace_back(name);
                 source_types.emplace_back(rd->column_type());
@@ -855,6 +882,9 @@ StatusOr<std::unique_ptr<ColumnIterator>> ColumnReader::_new_json_iterator(Colum
                 check_paths.emplace(name);
                 break;
             } else if (name.starts_with(target + ".")) {
+                LOG(INFO) << "  ✓ Match: target[" << target << "] matches source["
+                          << name << "] (source is child)";
+
                 // target: b.b2
                 // source: b.b2.b3
                 if (target_types[k] != TYPE_JSON && !is_string_type(target_types[k])) {
@@ -877,6 +907,17 @@ StatusOr<std::unique_ptr<ColumnIterator>> ColumnReader::_new_json_iterator(Colum
             }
         }
         need_remain |= (i == end);
+    }
+
+    // Debug log: Print matching results
+    LOG(INFO) << "[FlatJson Debug] Matching completed:";
+    LOG(INFO) << "  Final selected columns (" << source_paths.size() << "):";
+    for (size_t i = 0; i < source_paths.size(); i++) {
+        LOG(INFO) << "    [" << i << "] " << source_paths[i]
+                  << " (" << type_to_string(source_types[i]) << ")";
+    }
+    if (need_remain && _has_remain) {
+        LOG(INFO) << "    [remain] will be read";
     }
 
     if (_has_remain && need_remain) {
@@ -907,6 +948,7 @@ StatusOr<std::unique_ptr<ColumnIterator>> ColumnReader::_new_json_iterator(Colum
         source_types.emplace_back(rd->column_type());
     }
 
+    LOG(INFO) << "[FlatJson Debug] Creating JsonFlatColumnIterator (selective read)";
     return create_json_flat_iterator(this, std::move(null_iter), std::move(all_iters), target_paths, target_types,
                                      source_paths, source_types);
 }

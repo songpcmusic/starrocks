@@ -33,6 +33,7 @@
 #include "exec/hdfs_scanner.h"
 #include "exprs/expr_context.h"
 #include "exprs/runtime_filter_bank.h"
+#include "formats/utils.h"
 #include "formats/parquet/metadata.h"
 #include "formats/parquet/schema.h"
 #include "formats/parquet/statistics_helper.h"
@@ -78,6 +79,10 @@ Status FileReader::init(HdfsScannerContext* ctx) {
     _prepare_read_columns(existed_column_names);
     RETURN_IF_ERROR(_scanner_ctx->update_materialized_columns(existed_column_names));
 
+    if (ctx->column_access_paths != nullptr && !ctx->column_access_paths->empty()) {
+        RETURN_IF_ERROR(init_column_access_paths(ctx));
+    }
+
     ASSIGN_OR_RETURN(_is_file_filtered, _scanner_ctx->should_skip_by_evaluating_not_existed_slots());
     if (_is_file_filtered) {
         return Status::OK();
@@ -91,6 +96,10 @@ Status FileReader::init(HdfsScannerContext* ctx) {
     }
 
     RETURN_IF_ERROR(_init_group_readers());
+
+    LOG(INFO) << "FileReader::init - file =" << _file->filename()
+              << ", row_group size =" << _file_metadata->t_metadata().row_groups.size();
+
     return Status::OK();
 }
 
@@ -497,6 +506,8 @@ Status FileReader::_init_group_readers() {
     // for pageIndex
     _group_reader_param.min_max_conjunct_ctxs = fd_scanner_ctx.min_max_conjunct_ctxs;
 
+    _group_reader_param.column_access_paths = fd_scanner_ctx.column_access_paths;
+
     int64_t row_group_first_row = 0;
     // select and create row group readers.
     for (size_t i = 0; i < _file_metadata->t_metadata().row_groups.size(); i++) {
@@ -607,6 +618,70 @@ Status FileReader::_exec_no_materialized_column_scan(ChunkPtr* chunk) {
     }
 
     return Status::EndOfFile("");
+}
+
+Status FileReader::init_column_access_paths(HdfsScannerContext* ctx) {
+    if (ctx->column_access_paths == nullptr || ctx->column_access_paths->empty()) {
+        return Status::OK();
+    }
+
+    const auto& schema = _file_metadata->schema();
+
+    std::unordered_map<std::string, const TIcebergSchemaField*> _field_name_2_lake_field;
+    if (_scanner_ctx->lake_schema != nullptr && schema.exist_filed_id()) {
+        for (const auto& each : ctx->lake_schema->fields) {
+            _field_name_2_lake_field.emplace(Utils::format_name(each.name, ctx->case_sensitive), &each);
+        }
+    }
+
+    std::unordered_map<std::string, const HdfsScannerContext::ColumnInfo*> _field_name_2_column;
+    for (const auto& column : ctx->materialized_columns) {
+        _field_name_2_column.emplace(Utils::format_name(column.name(), ctx->case_sensitive), &column);
+    }
+
+    std::vector<ColumnAccessPathPtr> new_paths;
+
+    for (const auto& path : *ctx->column_access_paths) {
+        auto& root = path->path();
+
+        const std::string& formatted_name = Utils::format_name(root, ctx->case_sensitive);
+
+        auto column_it = _field_name_2_column.find(formatted_name);
+        if (column_it ==  _field_name_2_column.end()) {
+            LOG(WARNING) << "Column not found in materialized_columns: " << root;
+            continue;
+        }
+
+        int32_t field_id = -1;
+        if (_scanner_ctx->lake_schema != nullptr && schema.exist_filed_id()) {
+            auto lake_it = _field_name_2_lake_field.find(formatted_name);
+            if (lake_it == _field_name_2_lake_field.end()) {
+                continue;
+            }
+
+            field_id = lake_it->second->field_id;
+        } else {
+            field_id = column_it->second->col_unique_id();
+        }
+
+        auto parquet_field = schema.get_stored_column_by_field_id(field_id);
+
+        int32_t index = schema.get_field_idx_by_field_id(field_id);
+        if (index < 0) {
+            LOG(WARNING) << "Column not found in parquet schema: " << root;
+            continue;
+        }
+
+        LogicalType type = column_it->second->slot_desc->type().type;
+
+        ASSIGN_OR_RETURN(auto converted_path, path->convert_by_index(parquet_field, type, index));
+        new_paths.emplace_back(std::move(converted_path));
+    }
+
+    _column_access_paths = std::move(new_paths);
+    ctx->column_access_paths = &_column_access_paths;
+
+    return Status::OK();
 }
 
 } // namespace starrocks::parquet

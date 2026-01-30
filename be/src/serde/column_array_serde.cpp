@@ -399,6 +399,10 @@ public:
     }
 
     static uint8_t* serialize(const VariantColumn& column, uint8_t* buff) {
+
+        LOG(INFO) << "VariantColumnSerde::serialize - pool_size=" << column.get_pool().size()
+                  << ", column_size=" << column.size();
+
         buff = write_little_endian_32(column.get_pool().size(), buff);
         for (const auto& v : column.get_pool()) {
             constexpr uint64_t size_field_length = sizeof(uint64_t);
@@ -416,6 +420,9 @@ public:
         column->reset_column();
         auto& pool = column->get_pool();
         pool.reserve(num_objects);
+
+        LOG(INFO) << "VariantColumnSerde::deserialize - num_objects =" << num_objects;
+
         for (int i = 0; i < num_objects; ++i) {
             uint64_t serialized_size = 0;
             buff = read_little_endian_64(buff, &serialized_size);
