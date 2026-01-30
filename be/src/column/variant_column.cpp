@@ -54,6 +54,13 @@ void VariantColumn::put_mysql_row_buffer(MysqlRowBuffer* buf, size_t idx, bool i
     VariantValue* variant = get_object(idx);
     DCHECK(variant != nullptr) << "Variant value is null at index " << idx;
 
+    if (variant->get_metadata().empty() && variant->get_value().empty()) {
+        LOG(WARNING) << "[VariantColumn::put_mysql_row_buffer] Empty VariantValue at index=" << idx
+                    << ". This should not happen. Pushing null instead.";
+        buf->push_null();
+        return;
+    }
+
     auto json = variant->to_json();
     if (!json.ok()) {
         buf->push_null();
