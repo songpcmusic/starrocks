@@ -199,7 +199,7 @@ StatusOr<bool> PageIndexReader::generate_read_range(SparseRange<uint64_t>& spars
     for (int idx : _group_reader->_active_column_indices) {
         const auto& column = _group_reader->_param.read_cols[idx];
         // complex type will be supported later
-        if (column.slot_type().is_complex_type()) {
+        if (column.slot_type().is_complex_type() || column.slot_type().type == TYPE_VARIANT) {
             continue;
         }
         SlotId slotId = column.slot_id();

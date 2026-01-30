@@ -92,6 +92,18 @@ StatusOr<ColumnPtr> VariantFunctions::_variant_query_impl(FunctionContext* conte
         }
 
         VariantValue* variant_value = variant_viewer.value(row);
+        if (variant_value == nullptr) {
+            LOG(INFO) << "variant_query input variant value is null at row " << row;
+            result.append_null();
+            continue;
+        }
+
+        if (variant_value->get_metadata().size() == 0 || variant_value->get_value().size() == 0) {
+            LOG(INFO) << "variant_query input variant value is null at row " << row;
+            result.append_null();
+            continue;
+        }
+
         auto path_value = path_viewer.value(row);
 
         auto variant_path = get_prepared_or_parse(context, path_value, &stored_path);
