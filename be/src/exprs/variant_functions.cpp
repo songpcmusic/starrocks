@@ -79,9 +79,6 @@ StatusOr<ColumnPtr> VariantFunctions::_variant_query_impl(FunctionContext* conte
     auto variant_viewer = ColumnViewer<TYPE_VARIANT>(columns[0]);
     auto path_viewer = ColumnViewer<TYPE_VARCHAR>(columns[1]);
 
-    auto* state =
-            reinterpret_cast<VariantPathState*>(context->get_function_state(FunctionContext::FRAGMENT_LOCAL));
-
     ColumnBuilder<ResultType> result(num_rows);
 
     VariantPath stored_path;
