@@ -29,7 +29,13 @@ class VariantValue {
 public:
     VariantValue(const std::string_view metadata, const std::string_view value) : _metadata(metadata), _value(value) {}
     VariantValue(std::string metadata, std::string value) : _metadata(std::move(metadata)), _value(std::move(value)) {}
-    VariantValue() = default;
+    VariantValue() {
+        static constexpr uint8_t header = static_cast<uint8_t>(VariantPrimitiveType::NULL_TYPE) << 2;
+        static constexpr uint8_t null_chars[] = {header};
+
+        _metadata = std::string(VariantMetadata::kEmptyMetadata);
+        _value = std::string(reinterpret_cast<const char*>(null_chars), 1);
+    }
 
     /**
      * Static factory method to create a VariantValue from a Slice.
