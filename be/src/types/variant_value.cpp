@@ -87,7 +87,10 @@ VariantValue VariantValue::of_variant(const Variant& variant) {
     const std::string_view metadata = variant.metadata().value();
     const std::string_view value = variant.value();
 
-    return VariantValue(metadata, value);
+    std::string value_str(value);
+    std::string metadata_str(metadata);
+
+    return VariantValue(std::move(metadata_str), std::move(value_str));
 }
 
 VariantValue VariantValue::of_null() {
