@@ -575,6 +575,9 @@ public class FunctionSet {
     public static final String MAP_SIZE = "map_size";
 
     public static final String MAP_AGG = "map_agg";
+    public static final String AVG_MAP = "avg_map";
+    public static final String MAX_MAP = "max_map";
+    public static final String MIN_MAP = "min_map";
     public static final String SUM_MAP = "sum_map";
 
     public static final String TRANSFORM_VALUES = "transform_values";
@@ -960,6 +963,9 @@ public class FunctionSet {
                     .add(INTERSECT_COUNT)
                     .add(LC_PERCENTILE_DISC)
                     .add(MAP_AGG)
+                    .add(AVG_MAP)
+                    .add(MAX_MAP)
+                    .add(MIN_MAP)
                     .add(SUM_MAP)
                     .build();
 
@@ -1493,6 +1499,12 @@ public class FunctionSet {
         // sum_map
         registerBuiltinSumMapFunction();
 
+        // avg_map
+        registerBuiltinAvgMapFunction();
+
+        // min_map and max_map
+        registerBuiltinMinMaxMapFunctions();
+
         // HLL_UNION_AGG
         addBuiltin(AggregateFunction.createBuiltin(HLL_UNION_AGG,
                 Lists.newArrayList(HLLType.HLL), IntegerType.BIGINT, HLLType.HLL,
@@ -1817,6 +1829,21 @@ public class FunctionSet {
         addBuiltin(AggregateFunction.createBuiltin(FunctionSet.SUM_MAP,
                 Lists.newArrayList(AnyMapType.ANY_MAP), AnyMapType.ANY_MAP, null,
                 false, false, false));
+    }
+
+    private void registerBuiltinAvgMapFunction() {
+        // Per-key AVG needs a binary intermediate state containing both sum and count.
+        addBuiltin(AggregateFunction.createBuiltin(FunctionSet.AVG_MAP,
+                Lists.newArrayList(AnyMapType.ANY_MAP), AnyMapType.ANY_MAP, VarbinaryType.VARBINARY,
+                false, false, false));
+    }
+
+    private void registerBuiltinMinMaxMapFunctions() {
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            addBuiltin(AggregateFunction.createBuiltin(functionName,
+                    Lists.newArrayList(AnyMapType.ANY_MAP), AnyMapType.ANY_MAP, null,
+                    false, false, false));
+        }
     }
 
     private void registerBuiltinArrayUniqueAggFunction() {

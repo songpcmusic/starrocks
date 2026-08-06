@@ -51,6 +51,14 @@ AggregateFunctionPtr resolve_non_builtin_aggregate_function(TFunctionBinaryType:
 
 AggregateFuncResolver::AggregateFuncResolver() {
     register_avg();
+    register_avg_map1();
+    register_avg_map2();
+    register_avg_map3();
+    register_avg_map4();
+    register_min_max_map1();
+    register_min_max_map2();
+    register_min_max_map3();
+    register_min_max_map4();
     register_sum_map1();
     register_sum_map2();
     register_sum_map3();
@@ -252,9 +260,23 @@ AggregateFunctionPtr get_aggregate_function(const std::string& agg_func_name, co
             arg_type = std::move(child_type);
         }
 
-        if (agg_func_name == "sum_map") {
-            ret_type = arg_type.children[1];
-            arg_type = arg_type.children[0];
+        if (agg_func_name == "sum_map" || agg_func_name == "min_map" || agg_func_name == "max_map") {
+            DCHECK_EQ(arg_type.children.size(), 2);
+            TypeDescriptor key_type = arg_type.children[0];
+            TypeDescriptor value_type = arg_type.children[1];
+            arg_type = std::move(key_type);
+            ret_type = std::move(value_type);
+        }
+
+        // avg_map always returns MAP<K, DOUBLE>, so its declared return type cannot identify
+        // the concrete input value implementation. Use the original map value type as the
+        // resolver's second dispatch dimension; the aggregate itself writes DOUBLE values.
+        if (agg_func_name == "avg_map") {
+            DCHECK_EQ(arg_type.children.size(), 2);
+            TypeDescriptor key_type = arg_type.children[0];
+            TypeDescriptor value_type = arg_type.children[1];
+            arg_type = std::move(key_type);
+            ret_type = std::move(value_type);
         }
 
         if (is_arrow_input) {

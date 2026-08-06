@@ -19,15 +19,22 @@ import com.starrocks.sql.analyzer.SemanticException;
 import com.starrocks.type.AnyArrayType;
 import com.starrocks.type.AnyElementType;
 import com.starrocks.type.ArrayType;
+import com.starrocks.type.BitmapType;
 import com.starrocks.type.BooleanType;
 import com.starrocks.type.CharType;
+import com.starrocks.type.DateType;
 import com.starrocks.type.DecimalType;
 import com.starrocks.type.FloatType;
+import com.starrocks.type.HLLType;
 import com.starrocks.type.IntegerType;
 import com.starrocks.type.InvalidType;
+import com.starrocks.type.JsonType;
+import com.starrocks.type.MapType;
 import com.starrocks.type.NullType;
 import com.starrocks.type.Type;
+import com.starrocks.type.VarbinaryType;
 import com.starrocks.type.VarcharType;
+import com.starrocks.type.VariantType;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -379,5 +386,153 @@ public class FunctionSetTest {
         Assertions.assertEquals(2, tableFunction.getTableFnReturnTypes().size());
         Assertions.assertEquals(IntegerType.BIGINT, tableFunction.getTableFnReturnTypes().get(0));
         Assertions.assertEquals(VarcharType.VARCHAR, tableFunction.getTableFnReturnTypes().get(1));
+    }
+
+    @Test
+    public void testAvgMapPolymorphicTypes() {
+        MapType intMap = new MapType(IntegerType.INT, IntegerType.INT);
+        Function desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {intMap},
+                InvalidType.INVALID, false);
+        Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assertions.assertNotNull(function);
+        Assertions.assertEquals(intMap, function.getArgs()[0]);
+        Assertions.assertEquals(new MapType(IntegerType.INT, FloatType.DOUBLE), function.getReturnType());
+        Assertions.assertEquals(VarbinaryType.VARBINARY, ((AggregateFunction) function).getIntermediateType());
+
+        MapType decimalMap = new MapType(VarcharType.VARCHAR, DecimalType.DEFAULT_DECIMAL128);
+        desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {decimalMap},
+                InvalidType.INVALID, false);
+        function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assertions.assertNotNull(function);
+        Assertions.assertEquals(decimalMap, function.getArgs()[0]);
+        Assertions.assertEquals(new MapType(VarcharType.VARCHAR, FloatType.DOUBLE), function.getReturnType());
+
+        MapType decimalV2Map = new MapType(IntegerType.INT, DecimalType.DECIMALV2);
+        desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {decimalV2Map},
+                InvalidType.INVALID, false);
+        function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assertions.assertNotNull(function);
+        Assertions.assertEquals(decimalV2Map, function.getArgs()[0]);
+        Assertions.assertEquals(new MapType(IntegerType.INT, FloatType.DOUBLE), function.getReturnType());
+
+        desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {NullType.NULL},
+                InvalidType.INVALID, false);
+        function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assertions.assertNotNull(function);
+        Assertions.assertEquals(new MapType(BooleanType.BOOLEAN, BooleanType.BOOLEAN), function.getArgs()[0]);
+        Assertions.assertEquals(new MapType(BooleanType.BOOLEAN, FloatType.DOUBLE), function.getReturnType());
+
+        MapType stringValueMap = new MapType(IntegerType.INT, VarcharType.VARCHAR);
+        Function invalidStringValue = new Function(new FunctionName(FunctionSet.AVG_MAP),
+                new Type[] {stringValueMap}, InvalidType.INVALID, false);
+        SemanticException stringError = Assertions.assertThrows(SemanticException.class,
+                () -> functionSet.getFunction(invalidStringValue, Function.CompareMode.IS_SUPERTYPE_OF));
+        Assertions.assertTrue(stringError.getMessage().contains("avg_map unsupported value type"));
+
+        MapType decimal256Map = new MapType(IntegerType.INT, DecimalType.DEFAULT_DECIMAL256);
+        Function invalidDecimal256 = new Function(new FunctionName(FunctionSet.AVG_MAP),
+                new Type[] {decimal256Map}, InvalidType.INVALID, false);
+        SemanticException decimalError = Assertions.assertThrows(SemanticException.class,
+                () -> functionSet.getFunction(invalidDecimal256, Function.CompareMode.IS_SUPERTYPE_OF));
+        Assertions.assertTrue(decimalError.getMessage().contains("avg_map unsupported value type"));
+    }
+
+    @Test
+    public void testMinMaxMapPolymorphicIntegerType() {
+        MapType intMap = new MapType(IntegerType.INT, IntegerType.INT);
+        for (String functionName : new String[] {"min_map", "max_map"}) {
+            Function desc = new Function(new FunctionName(functionName), new Type[] {intMap},
+                    InvalidType.INVALID, false);
+            Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+            Assertions.assertNotNull(function, functionName);
+            Assertions.assertEquals(intMap, function.getArgs()[0]);
+            Assertions.assertEquals(intMap, function.getReturnType());
+            Assertions.assertEquals(intMap, ((AggregateFunction) function).getIntermediateTypeOrReturnType());
+        }
+    }
+
+    @Test
+    public void testMinMaxMapUntypedNull() {
+        MapType booleanMap = new MapType(BooleanType.BOOLEAN, BooleanType.BOOLEAN);
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            Function desc = new Function(new FunctionName(functionName), new Type[] {NullType.NULL},
+                    InvalidType.INVALID, false);
+            Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+            Assertions.assertNotNull(function, functionName);
+            Assertions.assertEquals(booleanMap, function.getArgs()[0]);
+            Assertions.assertEquals(booleanMap, function.getReturnType());
+            Assertions.assertEquals(booleanMap, ((AggregateFunction) function).getIntermediateTypeOrReturnType());
+        }
+    }
+
+    @Test
+    public void testMinMaxMapStringType() {
+        MapType stringMap = new MapType(VarcharType.VARCHAR, VarcharType.VARCHAR);
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            Function desc = new Function(new FunctionName(functionName), new Type[] {stringMap},
+                    InvalidType.INVALID, false);
+            Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+            Assertions.assertNotNull(function, functionName);
+            Assertions.assertEquals(stringMap, function.getArgs()[0]);
+            Assertions.assertEquals(stringMap, function.getReturnType());
+            Assertions.assertEquals(stringMap, ((AggregateFunction) function).getIntermediateTypeOrReturnType());
+        }
+    }
+
+    @Test
+    public void testMinMaxMapOrderableTypeMatrix() {
+        Type[] supportedKeys = {BooleanType.BOOLEAN, IntegerType.TINYINT, IntegerType.SMALLINT, IntegerType.INT,
+                IntegerType.BIGINT, IntegerType.LARGEINT, FloatType.FLOAT, FloatType.DOUBLE, DecimalType.DECIMALV2,
+                DecimalType.DEFAULT_DECIMAL32, DecimalType.DEFAULT_DECIMAL64, DecimalType.DEFAULT_DECIMAL128,
+                CharType.CHAR, VarcharType.VARCHAR, DateType.DATE, DateType.DATETIME};
+        Type[] supportedValues = {BooleanType.BOOLEAN, IntegerType.TINYINT, IntegerType.SMALLINT, IntegerType.INT,
+                IntegerType.BIGINT, IntegerType.LARGEINT, FloatType.FLOAT, FloatType.DOUBLE, DecimalType.DECIMALV2,
+                DecimalType.DEFAULT_DECIMAL32, DecimalType.DEFAULT_DECIMAL64, DecimalType.DEFAULT_DECIMAL128,
+                DecimalType.DEFAULT_DECIMAL256, CharType.CHAR, VarcharType.VARCHAR, DateType.DATE, DateType.DATETIME};
+
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            for (Type keyType : supportedKeys) {
+                MapType map = new MapType(keyType, IntegerType.INT);
+                Function desc = new Function(new FunctionName(functionName), new Type[] {map},
+                        InvalidType.INVALID, false);
+                Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+                Assertions.assertNotNull(function, functionName + " key " + keyType);
+                Assertions.assertEquals(map, function.getReturnType());
+            }
+            for (Type valueType : supportedValues) {
+                MapType map = new MapType(IntegerType.INT, valueType);
+                Function desc = new Function(new FunctionName(functionName), new Type[] {map},
+                        InvalidType.INVALID, false);
+                Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+                Assertions.assertNotNull(function, functionName + " value " + valueType);
+                Assertions.assertEquals(map, function.getReturnType());
+            }
+
+            for (MapType invalidMap : new MapType[] {
+                    new MapType(DecimalType.DEFAULT_DECIMAL256, IntegerType.INT),
+                    new MapType(new ArrayType(IntegerType.INT), IntegerType.INT),
+                    new MapType(IntegerType.INT, JsonType.JSON),
+                    new MapType(IntegerType.INT, VariantType.VARIANT),
+                    new MapType(IntegerType.INT, HLLType.HLL),
+                    new MapType(IntegerType.INT, BitmapType.BITMAP),
+                    new MapType(IntegerType.INT, VarbinaryType.VARBINARY),
+                    new MapType(IntegerType.INT, new ArrayType(IntegerType.INT)),
+                    new MapType(IntegerType.INT, new MapType(IntegerType.INT, IntegerType.INT))}) {
+                Function invalid = new Function(new FunctionName(functionName), new Type[] {invalidMap},
+                        InvalidType.INVALID, false);
+                Assertions.assertThrows(SemanticException.class,
+                        () -> functionSet.getFunction(invalid, Function.CompareMode.IS_SUPERTYPE_OF),
+                        functionName + " should reject " + invalidMap);
+            }
+
+            for (Type[] invalidArgs : new Type[][] {
+                    {}, {IntegerType.INT}, {new MapType(IntegerType.INT, IntegerType.INT),
+                            new MapType(IntegerType.INT, IntegerType.INT)}}) {
+                Function invalid = new Function(new FunctionName(functionName), invalidArgs,
+                        InvalidType.INVALID, false);
+                Assertions.assertNull(functionSet.getFunction(invalid, Function.CompareMode.IS_SUPERTYPE_OF),
+                        functionName + " should reject arity/types " + java.util.Arrays.toString(invalidArgs));
+            }
+        }
     }
 }

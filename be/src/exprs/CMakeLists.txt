@@ -26,6 +26,14 @@ set(EXPR_FILES
   agg/factory/aggregate_factory.cpp
   agg/factory/aggregate_resolver_approx.cpp
   agg/factory/aggregate_resolver_avg.cpp
+  agg/factory/aggregate_resolver_avg_map1.cpp
+  agg/factory/aggregate_resolver_avg_map2.cpp
+  agg/factory/aggregate_resolver_avg_map3.cpp
+  agg/factory/aggregate_resolver_avg_map4.cpp
+  agg/factory/aggregate_resolver_min_max_map1.cpp
+  agg/factory/aggregate_resolver_min_max_map2.cpp
+  agg/factory/aggregate_resolver_min_max_map3.cpp
+  agg/factory/aggregate_resolver_min_max_map4.cpp
   agg/factory/aggregate_resolver_sum_map1.cpp
   agg/factory/aggregate_resolver_sum_map2.cpp
   agg/factory/aggregate_resolver_sum_map3.cpp
