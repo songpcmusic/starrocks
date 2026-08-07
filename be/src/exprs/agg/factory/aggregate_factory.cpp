@@ -30,6 +30,14 @@ namespace starrocks {
 
 AggregateFuncResolver::AggregateFuncResolver() {
     register_avg();
+    register_avg_map1();
+    register_avg_map2();
+    register_avg_map3();
+    register_avg_map4();
+    register_min_max_map1();
+    register_min_max_map2();
+    register_min_max_map3();
+    register_min_max_map4();
     register_sum_map1();
     register_sum_map2();
     register_sum_map3();

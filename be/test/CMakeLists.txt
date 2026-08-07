@@ -94,6 +94,8 @@ set(EXEC_FILES
         ./exec/table_function_node_test.cpp
         ./exprs/agg/json_each_test.cpp
         ./exprs/agg/aggregate_test.cpp
+        ./exprs/agg/avg_map_test.cpp
+        ./exprs/agg/min_max_map_test.cpp
         ./exprs/arithmetic_expr_test.cpp
         ./exprs/arithmetic_operation_test.cpp
         ./exprs/array_element_expr_test.cpp

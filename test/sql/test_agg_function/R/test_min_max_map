@@ -1,0 +1,183 @@
+-- name: test_min_max_map
+DROP DATABASE IF EXISTS min_max_map_${uuid0};
+-- result:
+-- !result
+CREATE DATABASE min_max_map_${uuid0};
+-- result:
+-- !result
+USE min_max_map_${uuid0};
+-- result:
+-- !result
+
+CREATE TABLE min_max_map_test (
+    id INT,
+    grp INT,
+    m_int MAP<INT, INT>,
+    m_string MAP<VARCHAR(20), VARCHAR(20)>,
+    m_decimal MAP<INT, DECIMAL(18, 2)>,
+    m_date MAP<INT, DATE>
+)
+DUPLICATE KEY(id)
+DISTRIBUTED BY HASH(id) BUCKETS 3
+PROPERTIES ("replication_num" = "1");
+-- result:
+-- !result
+
+INSERT INTO min_max_map_test VALUES
+    (1, 1, map{1:10, 2:20, 3:NULL, NULL:4}, map{'a':'z', 'b':'m'},
+        map{1:1.25, 2:10.00}, map{1:'2024-01-03'}),
+    (2, 1, map{1:5, 3:NULL, NULL:8}, map{'a':'a'},
+        map{1:2.50}, map{1:'2024-01-01'}),
+    (3, 2, map{1:20, 2:40, 4:-7}, map{'a':'q', 'b':'x'},
+        map{1:-3.75, 2:20.00}, map{1:'2024-01-05'}),
+    (4, 2, NULL, NULL, NULL, NULL),
+    (5, 2, map{}, map{}, map{}, map{});
+-- result:
+-- !result
+
+SELECT cardinality(min_map(m_int)), cardinality(max_map(m_int)) FROM min_max_map_test;
+-- result:
+5	5
+-- !result
+
+SELECT min_map(m_int)[1], min_map(m_int)[2], min_map(m_int)[3], min_map(m_int)[4], min_map(m_int)[NULL],
+       max_map(m_int)[1], max_map(m_int)[2], max_map(m_int)[3], max_map(m_int)[4], max_map(m_int)[NULL]
+FROM min_max_map_test;
+-- result:
+5	20	None	-7	4	20	40	None	-7	8
+-- !result
+
+SELECT min_map(m_string)['a'], min_map(m_string)['b'],
+       max_map(m_string)['a'], max_map(m_string)['b']
+FROM min_max_map_test;
+-- result:
+a	m	z	x
+-- !result
+
+SELECT typeof(min_map(m_decimal)), min_map(m_decimal)[1], min_map(m_decimal)[2],
+       typeof(max_map(m_decimal)), max_map(m_decimal)[1], max_map(m_decimal)[2]
+FROM min_max_map_test;
+-- result:
+map<int,decimal64(18, 2)>	-3.75	10.00	map<int,decimal64(18, 2)>	2.50	20.00
+-- !result
+
+SELECT typeof(min_map(m_date)), min_map(m_date)[1],
+       typeof(max_map(m_date)), max_map(m_date)[1]
+FROM min_max_map_test;
+-- result:
+map<int,date>	2024-01-01	map<int,date>	2024-01-05
+-- !result
+
+SELECT grp, min_map(m_int)[1], min_map(m_int)[2], min_map(m_int)[NULL],
+       max_map(m_int)[1], max_map(m_int)[2], max_map(m_int)[NULL]
+FROM min_max_map_test
+GROUP BY grp
+ORDER BY grp;
+-- result:
+1	5	20	4	10	20	8
+2	20	40	None	20	40	None
+-- !result
+
+SELECT min_map(NULL), typeof(min_map(NULL)), max_map(NULL), typeof(max_map(NULL));
+-- result:
+None	map<boolean,boolean>	None	map<boolean,boolean>
+-- !result
+
+SELECT min_map(m), max_map(m)
+FROM (
+    SELECT CAST(NULL AS MAP<INT, INT>) AS m
+    UNION ALL
+    SELECT CAST(NULL AS MAP<INT, INT>)
+) t;
+-- result:
+None	None
+-- !result
+
+SELECT min_map(m), max_map(m)
+FROM (
+    SELECT CAST(map{} AS MAP<INT, INT>) AS m
+    UNION ALL
+    SELECT CAST(map{} AS MAP<INT, INT>)
+) t;
+-- result:
+{}	{}
+-- !result
+
+SELECT min_map(m), max_map(m)
+FROM (
+    SELECT map{1:CAST(NULL AS INT)} AS m
+    UNION ALL
+    SELECT map{1:CAST(NULL AS INT)}
+) t;
+-- result:
+{1:null}	{1:null}
+-- !result
+
+SELECT cardinality(min_map(m)), min_map(m)[NULL], min_map(m)[1],
+       cardinality(max_map(m)), max_map(m)[NULL], max_map(m)[1]
+FROM (
+    SELECT map{NULL:4, 1:10} AS m
+    UNION ALL
+    SELECT map{NULL:8, 1:5}
+) t;
+-- result:
+2	4	5	2	8	10
+-- !result
+
+-- MAP constructors canonicalize duplicate keys before aggregation and keep the last value.
+SELECT min_map(m)[1], min_map(m)[2], max_map(m)[1], max_map(m)[2]
+FROM (
+    SELECT map_from_arrays([1, 1, 2], [0, 10, 100]) AS m
+    UNION ALL
+    SELECT map{1:20}
+) t;
+-- result:
+10	100	20	100
+-- !result
+
+SELECT typeof(min_map(m)), min_map(m)[1], typeof(max_map(m)), max_map(m)[1]
+FROM (
+    SELECT map{1:CAST(1.25 AS DECIMALV2(18, 2))} AS m
+    UNION ALL
+    SELECT map{1:CAST(-2.75 AS DECIMALV2(18, 2))}
+) t;
+-- result:
+map<tinyint,decimal(18, 2)>	-2.75	map<tinyint,decimal(18, 2)>	1.25
+-- !result
+
+SELECT cardinality(min_map(m)), min_map(m)[1], min_map(m)[100000],
+       cardinality(max_map(m)), max_map(m)[1], max_map(m)[100000]
+FROM (
+    SELECT map{generate_series:generate_series} AS m
+    FROM TABLE(generate_series(1, 100000))
+) t;
+-- result:
+100000	1	100000	100000	1	100000
+-- !result
+
+SET streaming_preaggregation_mode=force_streaming;
+-- result:
+-- !result
+SELECT min_map(m_int)[1], min_map(m_int)[2], min_map(m_int)[NULL],
+       max_map(m_int)[1], max_map(m_int)[2], max_map(m_int)[NULL]
+FROM min_max_map_test;
+-- result:
+5	20	4	20	40	8
+-- !result
+
+SET streaming_preaggregation_mode=force_preaggregation;
+-- result:
+-- !result
+SELECT min_map(m_int)[1], min_map(m_int)[2], min_map(m_int)[NULL],
+       max_map(m_int)[1], max_map(m_int)[2], max_map(m_int)[NULL]
+FROM min_max_map_test;
+-- result:
+5	20	4	20	40	8
+-- !result
+SET streaming_preaggregation_mode=auto;
+-- result:
+-- !result
+
+DROP DATABASE min_max_map_${uuid0};
+-- result:
+-- !result

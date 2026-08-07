@@ -208,6 +208,46 @@ public class PolymorphicFunctionAnalyzer {
             return new MapType(k, v);
         }
     }
+    private static class AvgMapDeduce implements java.util.function.Function<Type[], Type> {
+        @Override
+        public Type apply(Type[] types) {
+            MapType mapType = (MapType) types[0];
+            // ANY_MAP initially expands an untyped NULL to MAP<NULL, NULL>. Normalize
+            // the child types before validation, consistently with sum_map and the
+            // generic polymorphic-function resolver.
+            Type keyType = replaceNullType2Boolean(mapType.getKeyType());
+            Type valueType = replaceNullType2Boolean(mapType.getValueType());
+            boolean supportedKey = keyType.isBoolean() || keyType.isNumericType() || keyType.isStringType()
+                    || keyType.isDateType();
+            if (!supportedKey) {
+                throw new SemanticException("avg_map unsupported key type: " + keyType);
+            }
+            if (!valueType.isBoolean() && !valueType.isNumericType()) {
+                throw new SemanticException("avg_map unsupported value type: " + valueType);
+            }
+            return new MapType(keyType, Type.DOUBLE);
+        }
+    }
+
+    private static class MinMaxMapDeduce implements java.util.function.Function<Type[], Type> {
+        @Override
+        public Type apply(Type[] types) {
+            MapType mapType = (MapType) types[0];
+            Type keyType = replaceNullType2Boolean(mapType.getKeyType());
+            Type valueType = replaceNullType2Boolean(mapType.getValueType());
+            boolean supportedKey = keyType.isBoolean() || keyType.isNumericType() || keyType.isStringType()
+                    || keyType.isDateType();
+            if (!supportedKey) {
+                throw new SemanticException("min_map/max_map unsupported key type: " + keyType);
+            }
+            boolean supportedValue = valueType.isBoolean() || valueType.isNumericType() || valueType.isStringType()
+                    || valueType.isDateType();
+            if (!supportedValue) {
+                throw new SemanticException("min_map/max_map unsupported value type: " + valueType);
+            }
+            return new MapType(keyType, valueType);
+        }
+    }
     private static final ImmutableMap<String, java.util.function.Function<Type[], Type>> DEDUCE_RETURN_TYPE_FUNCTIONS
             = ImmutableMap.<String, java.util.function.Function<Type[], Type>>builder()
             .put(FunctionSet.MAP_KEYS, new MapKeysDeduce())
@@ -226,6 +266,9 @@ public class PolymorphicFunctionAnalyzer {
             // it's mock, need handle it in expressionAnalyzer
             .put(FunctionSet.NAMED_STRUCT, new RowDeduce())
             .put(FunctionSet.ANY_VALUE, types -> types[0])
+            .put(FunctionSet.AVG_MAP, new AvgMapDeduce())
+            .put(FunctionSet.MAX_MAP, new MinMaxMapDeduce())
+            .put(FunctionSet.MIN_MAP, new MinMaxMapDeduce())
             .put(FunctionSet.SUM_MAP, new SumMapDeduce())
             .build();
 

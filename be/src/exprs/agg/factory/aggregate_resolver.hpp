@@ -58,6 +58,14 @@ class AggregateFuncResolver {
 
 public:
     void register_avg();
+    void register_avg_map1();
+    void register_avg_map2();
+    void register_avg_map3();
+    void register_avg_map4();
+    void register_min_max_map1();
+    void register_min_max_map2();
+    void register_min_max_map3();
+    void register_min_max_map4();
     void register_sum_map1();
     void register_sum_map2();
     void register_sum_map3();

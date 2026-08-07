@@ -1,0 +1,67 @@
+-- name: test_avg_map
+DROP DATABASE IF EXISTS avg_map_${uuid0};
+CREATE DATABASE avg_map_${uuid0};
+USE avg_map_${uuid0};
+
+CREATE TABLE avg_map_test (
+    id INT,
+    m_int MAP<INT, INT>,
+    m_string MAP<VARCHAR(20), DOUBLE>,
+    m_decimal MAP<INT, DECIMAL(18, 2)>
+)
+DUPLICATE KEY(id)
+DISTRIBUTED BY HASH(id) BUCKETS 3
+PROPERTIES ("replication_num" = "1");
+
+INSERT INTO avg_map_test VALUES
+    (1, map{1:0, 2:20, 3:NULL, NULL:4}, map{'a':1.0, 'b':2.0}, map{1:1.00, 2:10.00}),
+    (2, map{1:10, 3:NULL, NULL:8}, map{'a':3.0}, map{1:2.00}),
+    (3, map{1:20, 2:40}, map{'a':5.0, 'b':8.0}, map{1:3.00, 2:20.00}),
+    (4, NULL, NULL, NULL),
+    (5, map{}, map{}, map{});
+
+SELECT avg_map(m_int)[1], avg_map(m_int)[2], avg_map(m_int)[3], avg_map(m_int)[NULL]
+FROM avg_map_test;
+
+SELECT avg_map(m_string)['a'], avg_map(m_string)['b'] FROM avg_map_test;
+
+SELECT avg_map(m_decimal)[1], avg_map(m_decimal)[2] FROM avg_map_test;
+
+SELECT cardinality(avg_map(m_int)) FROM avg_map_test;
+
+-- SQL MAP constructors canonicalize duplicate keys before avg_map sees them.
+-- map_from_arrays keeps the last value for key 1, so the visible inputs are 10 and 20.
+SELECT avg_map(m)[1], avg_map(m)[2]
+FROM (
+    SELECT map_from_arrays([1, 1, 2], [0, 10, 100]) AS m
+    UNION ALL
+    SELECT map{1:20}
+) t;
+
+SELECT avg_map(NULL);
+
+SELECT avg_map(m)[1]
+FROM (
+    SELECT map{1:CAST(1.00 AS DECIMALV2(18, 2))} AS m
+    UNION ALL
+    SELECT map{1:CAST(2.00 AS DECIMALV2(18, 2))}
+    UNION ALL
+    SELECT map{1:CAST(3.00 AS DECIMALV2(18, 2))}
+) t;
+
+SELECT avg_map(m)
+FROM (SELECT CAST(NULL AS MAP<INT, INT>) AS m) t;
+
+SELECT avg_map(m)
+FROM (SELECT CAST(map{} AS MAP<INT, INT>) AS m) t;
+
+SET streaming_preaggregation_mode=force_streaming;
+SELECT avg_map(m_int)[1], avg_map(m_int)[2], avg_map(m_int)[3], avg_map(m_int)[NULL]
+FROM avg_map_test;
+
+SET streaming_preaggregation_mode=force_preaggregation;
+SELECT avg_map(m_int)[1], avg_map(m_int)[2], avg_map(m_int)[3], avg_map(m_int)[NULL]
+FROM avg_map_test;
+SET streaming_preaggregation_mode=auto;
+
+DROP DATABASE avg_map_${uuid0};

@@ -421,7 +421,8 @@ Status Aggregator::prepare(RuntimeState* state, ObjectPool* pool, RuntimeProfile
             // Map aggregates are registered by their concrete key and input value types. The
             // 3.3 aggregate factory predates the TypeDescriptor-aware resolver used on main, so
             // extract those two dimensions here without changing unrelated aggregate lookup.
-            if (fn.name.function_name == "sum_map") {
+            if (fn.name.function_name == "sum_map" || fn.name.function_name == "avg_map" ||
+                fn.name.function_name == "min_map" || fn.name.function_name == "max_map") {
                 DCHECK_EQ(arg_type.children.size(), 2);
                 TypeDescriptor key_type = arg_type.children[0];
                 TypeDescriptor value_type = arg_type.children[1];

@@ -16,6 +16,7 @@ package com.starrocks.catalog;
 
 import com.google.common.collect.Lists;
 import com.starrocks.analysis.FunctionName;
+import com.starrocks.sql.analyzer.SemanticException;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -307,5 +308,133 @@ public class FunctionSetTest {
         Assert.assertEquals(2, tableFunction.getTableFnReturnTypes().size());
         Assert.assertEquals(Type.BIGINT, tableFunction.getTableFnReturnTypes().get(0));
         Assert.assertEquals(Type.VARCHAR, tableFunction.getTableFnReturnTypes().get(1));
+    }
+
+    @Test
+    public void testAvgMapPolymorphicTypes() {
+        MapType intMap = new MapType(Type.INT, Type.INT);
+        Function desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {intMap},
+                Type.INVALID, false);
+        Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assert.assertNotNull(function);
+        Assert.assertEquals(intMap, function.getArgs()[0]);
+        Assert.assertEquals(new MapType(Type.INT, Type.DOUBLE), function.getReturnType());
+        Assert.assertEquals(Type.VARBINARY, ((AggregateFunction) function).getIntermediateType());
+
+        MapType decimalMap = new MapType(Type.VARCHAR, Type.DEFAULT_DECIMAL128);
+        desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {decimalMap},
+                Type.INVALID, false);
+        function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assert.assertNotNull(function);
+        Assert.assertEquals(decimalMap, function.getArgs()[0]);
+        Assert.assertEquals(new MapType(Type.VARCHAR, Type.DOUBLE), function.getReturnType());
+
+        MapType decimalV2Map = new MapType(Type.INT, Type.DECIMALV2);
+        desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {decimalV2Map},
+                Type.INVALID, false);
+        function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assert.assertNotNull(function);
+        Assert.assertEquals(decimalV2Map, function.getArgs()[0]);
+        Assert.assertEquals(new MapType(Type.INT, Type.DOUBLE), function.getReturnType());
+
+        desc = new Function(new FunctionName(FunctionSet.AVG_MAP), new Type[] {Type.NULL}, Type.INVALID, false);
+        function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+        Assert.assertNotNull(function);
+        Assert.assertEquals(new MapType(Type.BOOLEAN, Type.BOOLEAN), function.getArgs()[0]);
+        Assert.assertEquals(new MapType(Type.BOOLEAN, Type.DOUBLE), function.getReturnType());
+
+        MapType stringValueMap = new MapType(Type.INT, Type.VARCHAR);
+        Function invalidStringValue = new Function(new FunctionName(FunctionSet.AVG_MAP),
+                new Type[] {stringValueMap}, Type.INVALID, false);
+        SemanticException stringError = Assert.assertThrows(SemanticException.class,
+                () -> functionSet.getFunction(invalidStringValue, Function.CompareMode.IS_SUPERTYPE_OF));
+        Assert.assertTrue(stringError.getMessage().contains("avg_map unsupported value type"));
+    }
+
+    @Test
+    public void testMinMaxMapPolymorphicIntegerType() {
+        MapType intMap = new MapType(Type.INT, Type.INT);
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            Function desc = new Function(new FunctionName(functionName), new Type[] {intMap},
+                    Type.INVALID, false);
+            Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+            Assert.assertNotNull(functionName, function);
+            Assert.assertEquals(intMap, function.getArgs()[0]);
+            Assert.assertEquals(intMap, function.getReturnType());
+            Assert.assertNull(((AggregateFunction) function).getIntermediateType());
+        }
+    }
+
+    @Test
+    public void testMinMaxMapUntypedNull() {
+        MapType booleanMap = new MapType(Type.BOOLEAN, Type.BOOLEAN);
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            Function desc = new Function(new FunctionName(functionName), new Type[] {Type.NULL}, Type.INVALID, false);
+            Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+            Assert.assertNotNull(functionName, function);
+            Assert.assertEquals(booleanMap, function.getArgs()[0]);
+            Assert.assertEquals(booleanMap, function.getReturnType());
+        }
+    }
+
+    @Test
+    public void testMinMaxMapStringType() {
+        MapType stringMap = new MapType(Type.VARCHAR, Type.VARCHAR);
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            Function desc = new Function(new FunctionName(functionName), new Type[] {stringMap},
+                    Type.INVALID, false);
+            Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+            Assert.assertNotNull(functionName, function);
+            Assert.assertEquals(stringMap, function.getArgs()[0]);
+            Assert.assertEquals(stringMap, function.getReturnType());
+        }
+    }
+
+    @Test
+    public void testMinMaxMapOrderableTypeMatrix() {
+        Type[] supportedTypes = {Type.BOOLEAN, Type.TINYINT, Type.SMALLINT, Type.INT, Type.BIGINT, Type.LARGEINT,
+                Type.FLOAT, Type.DOUBLE, Type.DECIMALV2, Type.DEFAULT_DECIMAL32, Type.DEFAULT_DECIMAL64,
+                Type.DEFAULT_DECIMAL128, Type.CHAR, Type.VARCHAR, Type.DATE, Type.DATETIME};
+
+        for (String functionName : new String[] {FunctionSet.MIN_MAP, FunctionSet.MAX_MAP}) {
+            for (Type keyType : supportedTypes) {
+                MapType map = new MapType(keyType, Type.INT);
+                Function desc = new Function(new FunctionName(functionName), new Type[] {map},
+                        Type.INVALID, false);
+                Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+                Assert.assertNotNull(functionName + " key " + keyType, function);
+                Assert.assertEquals(map, function.getReturnType());
+            }
+            for (Type valueType : supportedTypes) {
+                MapType map = new MapType(Type.INT, valueType);
+                Function desc = new Function(new FunctionName(functionName), new Type[] {map},
+                        Type.INVALID, false);
+                Function function = functionSet.getFunction(desc, Function.CompareMode.IS_SUPERTYPE_OF);
+                Assert.assertNotNull(functionName + " value " + valueType, function);
+                Assert.assertEquals(map, function.getReturnType());
+            }
+
+            for (MapType invalidMap : new MapType[] {
+                    new MapType(new ArrayType(Type.INT), Type.INT),
+                    new MapType(Type.INT, Type.JSON),
+                    new MapType(Type.INT, Type.HLL),
+                    new MapType(Type.INT, Type.BITMAP),
+                    new MapType(Type.INT, Type.VARBINARY),
+                    new MapType(Type.INT, new ArrayType(Type.INT)),
+                    new MapType(Type.INT, new MapType(Type.INT, Type.INT))}) {
+                Function invalid = new Function(new FunctionName(functionName), new Type[] {invalidMap},
+                        Type.INVALID, false);
+                Assert.assertThrows(functionName + " should reject " + invalidMap, SemanticException.class,
+                        () -> functionSet.getFunction(invalid, Function.CompareMode.IS_SUPERTYPE_OF));
+            }
+
+            for (Type[] invalidArgs : new Type[][] {
+                    {}, {Type.INT}, {new MapType(Type.INT, Type.INT), new MapType(Type.INT, Type.INT)}}) {
+                Function invalid = new Function(new FunctionName(functionName), invalidArgs,
+                        Type.INVALID, false);
+                Assert.assertNull(functionName + " should reject arity/types " + java.util.Arrays.toString(invalidArgs),
+                        functionSet.getFunction(invalid, Function.CompareMode.IS_SUPERTYPE_OF));
+            }
+        }
     }
 }
