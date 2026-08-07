@@ -58,6 +58,9 @@ class AggregateFuncResolver {
 
 public:
     void register_avg();
+    void register_sum_map1();
+    void register_sum_map2();
+    void register_sum_map3();
     void register_bitmap();
     void register_minmaxany();
     void register_sumcount();

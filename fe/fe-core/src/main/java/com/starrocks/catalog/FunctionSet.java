@@ -460,6 +460,7 @@ public class FunctionSet {
     public static final String MAP_FROM_ARRAYS = "map_from_arrays";
     public static final String MAP_KEYS = "map_keys";
     public static final String MAP_SIZE = "map_size";
+    public static final String SUM_MAP = "sum_map";
     public static final String TRANSFORM_VALUES = "transform_values";
     public static final String TRANSFORM_KEYS = "transform_keys";
 
@@ -1084,6 +1085,8 @@ public class FunctionSet {
         // Percentile
         registerBuiltinPercentileAggFunction();
 
+        // sum_map
+        registerBuiltinSumMapFunction();
         // HLL_UNION_AGG
         addBuiltin(AggregateFunction.createBuiltin(HLL_UNION_AGG,
                 Lists.newArrayList(Type.HLL), Type.BIGINT, Type.HLL,
@@ -1301,6 +1304,13 @@ public class FunctionSet {
         }
         addBuiltin(AggregateFunction.createBuiltin(FunctionSet.ARRAY_AGG_DISTINCT,
                 Lists.newArrayList(Type.TIME), Type.ARRAY_DATETIME, Type.ARRAY_DATETIME,
+                false, false, false));
+    }
+
+    private void registerBuiltinSumMapFunction() {
+        // sum_map takes a MAP as input and returns a MAP with summed values
+        addBuiltin(AggregateFunction.createBuiltin(FunctionSet.SUM_MAP,
+                Lists.newArrayList(AnyMapType.ANY_MAP), AnyMapType.ANY_MAP, null,
                 false, false, false));
     }
 

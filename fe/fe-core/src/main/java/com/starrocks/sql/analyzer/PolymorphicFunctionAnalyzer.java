@@ -187,6 +187,27 @@ public class PolymorphicFunctionAnalyzer {
         }
     }
 
+    private static class SumMapDeduce implements java.util.function.Function<Type[], Type> {
+        @Override
+        public Type apply(Type[] types) {
+            MapType mapType = (MapType) types[0];
+            Type k = replaceNullType2Boolean(mapType.getKeyType());
+            Type v = replaceNullType2Boolean(mapType.getValueType());
+            boolean allScalarKv = k.isScalarType() && v.isScalarType();
+            if (!allScalarKv) {
+                throw new SemanticException("sum_map only support scalar KV");
+            }
+            if (v.isDecimalOfAnyVersion() || v.isStringType() || v.isDateType()) {
+                throw new SemanticException("sum_map unsupported value type:" + v);
+            }
+            if (v.isIntegerType() || v.isBoolean()) {
+                v = Type.BIGINT;
+            } else if (v.isFloatingPointType()) {
+                v = Type.DOUBLE;
+            }
+            return new MapType(k, v);
+        }
+    }
     private static final ImmutableMap<String, java.util.function.Function<Type[], Type>> DEDUCE_RETURN_TYPE_FUNCTIONS
             = ImmutableMap.<String, java.util.function.Function<Type[], Type>>builder()
             .put(FunctionSet.MAP_KEYS, new MapKeysDeduce())
@@ -205,6 +226,7 @@ public class PolymorphicFunctionAnalyzer {
             // it's mock, need handle it in expressionAnalyzer
             .put(FunctionSet.NAMED_STRUCT, new RowDeduce())
             .put(FunctionSet.ANY_VALUE, types -> types[0])
+            .put(FunctionSet.SUM_MAP, new SumMapDeduce())
             .build();
 
     private static Function resolveByDeducingReturnType(Function fn, Type[] inputArgTypes) {
@@ -420,4 +442,3 @@ public class PolymorphicFunctionAnalyzer {
         return null;
     }
 }
-

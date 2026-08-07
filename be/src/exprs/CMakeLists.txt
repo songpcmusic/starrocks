@@ -21,6 +21,9 @@ set(EXPR_FILES
   agg/factory/aggregate_factory.cpp
   agg/factory/aggregate_resolver_approx.cpp
   agg/factory/aggregate_resolver_avg.cpp
+  agg/factory/aggregate_resolver_sum_map1.cpp
+  agg/factory/aggregate_resolver_sum_map2.cpp
+  agg/factory/aggregate_resolver_sum_map3.cpp
   agg/factory/aggregate_resolver_minmaxany.cpp
   agg/factory/aggregate_resolver_others.cpp
   agg/factory/aggregate_resolver_sumcount.cpp

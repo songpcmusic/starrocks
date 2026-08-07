@@ -418,6 +418,17 @@ Status Aggregator::prepare(RuntimeState* state, ObjectPool* pool, RuntimeProfile
                 arg_type = arg_type.children[0];
             }
 
+            // Map aggregates are registered by their concrete key and input value types. The
+            // 3.3 aggregate factory predates the TypeDescriptor-aware resolver used on main, so
+            // extract those two dimensions here without changing unrelated aggregate lookup.
+            if (fn.name.function_name == "sum_map") {
+                DCHECK_EQ(arg_type.children.size(), 2);
+                TypeDescriptor key_type = arg_type.children[0];
+                TypeDescriptor value_type = arg_type.children[1];
+                arg_type = std::move(key_type);
+                return_type = std::move(value_type);
+            }
+
             const bool use_nullable_fn = agg_fn_type.use_nullable_fn(_use_intermediate_as_output());
             auto* func = get_aggregate_function(fn.name.function_name, arg_type.type, return_type.type, use_nullable_fn,
                                                 fn.binary_type, state->func_version());
