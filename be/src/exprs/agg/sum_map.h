@@ -75,10 +75,10 @@ struct SumMapAggregateFunctionState : public AggregateFunctionEmptyState {
                     // Non-null key
                     auto key = key_viewer.value(i);
 
-                    if (hash_map.contains(key)) {
+                    auto it = hash_map.find(key);
+                    if (it != hash_map.end()) {
                         // Sum the value with existing value (compile-time dispatch)
-                        auto idx = hash_map[key];
-                        value_result_column->get_data()[idx] += value;
+                        value_result_column->get_data()[it->second] += value;
                     } else {
                         // Insert new key-value pair
                         value_result_column->get_data().push_back(value);
@@ -113,10 +113,10 @@ struct SumMapAggregateFunctionState : public AggregateFunctionEmptyState {
                     auto raw_key = key_viewer.value(i);
                     KeyType key(raw_key);
 
-                    if (hash_map.contains(key)) {
+                    auto it = hash_map.find(key);
+                    if (it != hash_map.end()) {
                         // Sum the value with existing value (compile-time dispatch)
-                        auto idx = hash_map[key];
-                        value_result_column->get_data()[idx] += value;
+                        value_result_column->get_data()[it->second] += value;
 
                     } else {
                         // Insert new key-value pair
