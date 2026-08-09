@@ -201,16 +201,58 @@ public:
         ColumnViewer<KT> key_viewer(map_column->keys_column());
         ColumnViewer<VT> value_viewer(map_column->values_column());
         auto* dst_column = down_cast<BinaryColumn*>((*dst).get());
-        for (size_t row = 0; row < chunk_size; ++row) {
-            std::string serialized;
-            append_pod(&serialized, kSerializationVersion);
-            uint64_t entry_count = offsets[row + 1] - offsets[row];
-            append_pod(&serialized, entry_count);
-            for (size_t i = offsets[row]; i < offsets[row + 1]; ++i) {
-                append_input_entry(key_viewer, value_viewer, i, &serialized);
-            }
-            dst_column->append(Slice(serialized));
+
+        auto& serialized_bytes = dst_column->get_bytes();
+        auto& serialized_offsets = dst_column->get_offset();
+        DCHECK_EQ(serialized_bytes.size(), serialized_offsets.back());
+
+        size_t serialized_size = serialized_bytes.size();
+        serialized_offsets.reserve(serialized_offsets.size() + chunk_size);
+        const bool has_null_key = map_column->keys_column()->has_null();
+        constexpr size_t fixed_entry_size = sizeof(bool) + sizeof(ImmediateType) + sizeof(int64_t);
+        [[maybe_unused]] const BinaryColumn* string_key_data = nullptr;
+        if constexpr (lt_is_string<KT>) {
+            string_key_data =
+                    down_cast<const BinaryColumn*>(ColumnHelper::get_data_column(map_column->keys_column().get()));
         }
+        for (size_t row = 0; row < chunk_size; ++row) {
+            const size_t entry_count = offsets[row + 1] - offsets[row];
+            size_t row_size = sizeof(kSerializationVersion) + sizeof(uint64_t) + entry_count * fixed_entry_size;
+            if (!has_null_key) {
+                if constexpr (lt_is_string<KT>) {
+                    const auto& key_offsets = string_key_data->get_offset();
+                    row_size +=
+                            entry_count * sizeof(uint64_t) + key_offsets[offsets[row + 1]] - key_offsets[offsets[row]];
+                } else {
+                    row_size += entry_count * sizeof(KeyCppType);
+                }
+            } else {
+                for (size_t i = offsets[row]; i < offsets[row + 1]; ++i) {
+                    if (!key_viewer.is_null(i)) {
+                        if constexpr (lt_is_string<KT>) {
+                            row_size += sizeof(uint64_t) + key_viewer.value(i).size;
+                        } else {
+                            row_size += sizeof(KeyCppType);
+                        }
+                    }
+                }
+            }
+            serialized_size += row_size;
+            serialized_offsets.emplace_back(serialized_size);
+        }
+
+        size_t write_offset = serialized_bytes.size();
+        serialized_bytes.resize(serialized_size);
+        uint8_t* cursor = serialized_bytes.data() + write_offset;
+        for (size_t row = 0; row < chunk_size; ++row) {
+            write_pod(&cursor, kSerializationVersion);
+            uint64_t entry_count = offsets[row + 1] - offsets[row];
+            write_pod(&cursor, entry_count);
+            for (size_t i = offsets[row]; i < offsets[row + 1]; ++i) {
+                write_input_entry(key_viewer, value_viewer, i, &cursor);
+            }
+        }
+        DCHECK_EQ(cursor, serialized_bytes.data() + serialized_bytes.size());
     }
 
     void finalize_to_column(FunctionContext* ctx, ConstAggDataPtr __restrict state, Column* to) const override {
@@ -256,13 +298,19 @@ private:
         return value;
     }
 
+    template <typename T>
+    static void write_pod(uint8_t** output, const T& value) {
+        memcpy(*output, &value, sizeof(T));
+        *output += sizeof(T);
+    }
+
     template <typename KeyViewer, typename ValueViewer>
-    static void append_input_entry(const KeyViewer& key_viewer, const ValueViewer& value_viewer, size_t index,
-                                   std::string* output) {
+    static void write_input_entry(const KeyViewer& key_viewer, const ValueViewer& value_viewer, size_t index,
+                                  uint8_t** output) {
         bool is_null_key = key_viewer.is_null(index);
-        append_pod(output, is_null_key);
+        write_pod(output, is_null_key);
         if (!is_null_key) {
-            append_key_to_serialized(key_viewer.value(index), output);
+            write_key_to_serialized(key_viewer.value(index), output);
         }
 
         ValueState value_state;
@@ -270,8 +318,20 @@ private:
             value_state.sum += value_viewer.value(index);
             value_state.count = 1;
         }
-        append_pod(output, value_state.sum);
-        append_pod(output, value_state.count);
+        write_pod(output, value_state.sum);
+        write_pod(output, value_state.count);
+    }
+
+    template <typename Key>
+    static void write_key_to_serialized(const Key& key, uint8_t** output) {
+        if constexpr (lt_is_string<KT>) {
+            uint64_t size = key.size;
+            write_pod(output, size);
+            memcpy(*output, key.data, key.size);
+            *output += key.size;
+        } else {
+            write_pod(output, key);
+        }
     }
 
     template <typename Key>

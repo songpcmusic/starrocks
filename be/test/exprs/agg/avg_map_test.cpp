@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "column/binary_column.h"
@@ -196,6 +197,96 @@ TEST_F(AvgMapTest, convertToSerializeFormatRetainsPerKeyCounts) {
     ColumnPtr result = ColumnHelper::create_column(return_type, false);
     function->finalize_to_column(context.get(), state->state(), result.get());
     assert_int_double_result(*result, {1, 2, 3}, {15.0, 100.0, std::nullopt});
+}
+
+TEST_F(AvgMapTest, convertToSerializeFormatPreservesVersionOneWireLayout) {
+    auto append_pod = [](std::string* output, const auto& value) {
+        output->append(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+
+    TypeDescriptor int_argument_type = map_type(TypeDescriptor(TYPE_INT), TypeDescriptor(TYPE_INT));
+    TypeDescriptor int_return_type = map_type(TypeDescriptor(TYPE_INT), TypeDescriptor(TYPE_DOUBLE));
+    std::unique_ptr<FunctionContext> int_context = test_context(int_argument_type, int_return_type);
+    const AggregateFunction* int_function = resolve(int_argument_type, int_return_type);
+    ASSERT_NE(nullptr, int_function);
+
+    // Rows: {1:10, NULL:20, 2:NULL}, {}, {3:30}.
+    auto int_input_map = int_map({1, std::nullopt, 2, 3}, {10, 20, std::nullopt, 30}, {3, 3, 4});
+    ColumnPtr int_input(std::move(int_input_map));
+    Columns int_source{int_input};
+    ColumnPtr int_serialized = BinaryColumn::create();
+    int_function->convert_to_serialize_format(int_context.get(), int_source, int_input->size(), &int_serialized);
+    ASSERT_EQ(3, int_serialized->size());
+
+    std::string expected_row0;
+    uint8_t version = 1;
+    uint64_t entry_count = 3;
+    append_pod(&expected_row0, version);
+    append_pod(&expected_row0, entry_count);
+    for (const auto& [is_null_key, key, sum, count] : std::vector<std::tuple<bool, int32_t, double, int64_t>>{
+                 {false, 1, 10.0, 1}, {true, 0, 20.0, 1}, {false, 2, 0.0, 0}}) {
+        append_pod(&expected_row0, is_null_key);
+        if (!is_null_key) {
+            append_pod(&expected_row0, key);
+        }
+        append_pod(&expected_row0, sum);
+        append_pod(&expected_row0, count);
+    }
+
+    std::string expected_row1;
+    entry_count = 0;
+    append_pod(&expected_row1, version);
+    append_pod(&expected_row1, entry_count);
+
+    std::string expected_row2;
+    entry_count = 1;
+    append_pod(&expected_row2, version);
+    append_pod(&expected_row2, entry_count);
+    bool is_null_key = false;
+    int32_t key = 3;
+    double sum = 30;
+    int64_t count = 1;
+    append_pod(&expected_row2, is_null_key);
+    append_pod(&expected_row2, key);
+    append_pod(&expected_row2, sum);
+    append_pod(&expected_row2, count);
+
+    EXPECT_EQ(expected_row0, int_serialized->get(0).get_slice().to_string());
+    EXPECT_EQ(expected_row1, int_serialized->get(1).get_slice().to_string());
+    EXPECT_EQ(expected_row2, int_serialized->get(2).get_slice().to_string());
+
+    TypeDescriptor string_argument_type = map_type(TypeDescriptor::create_varchar_type(20), TypeDescriptor(TYPE_INT));
+    TypeDescriptor string_return_type = map_type(TypeDescriptor::create_varchar_type(20), TypeDescriptor(TYPE_DOUBLE));
+    std::unique_ptr<FunctionContext> string_context = test_context(string_argument_type, string_return_type);
+    const AggregateFunction* string_function = resolve(string_argument_type, string_return_type);
+    ASSERT_NE(nullptr, string_function);
+
+    auto string_input_map = string_int_map({"ab", std::nullopt}, {4, 6});
+    ColumnPtr string_input(std::move(string_input_map));
+    Columns string_source{string_input};
+    ColumnPtr string_serialized = BinaryColumn::create();
+    string_function->convert_to_serialize_format(string_context.get(), string_source, string_input->size(),
+                                                 &string_serialized);
+    ASSERT_EQ(1, string_serialized->size());
+
+    std::string expected_string_row;
+    entry_count = 2;
+    append_pod(&expected_string_row, version);
+    append_pod(&expected_string_row, entry_count);
+    append_pod(&expected_string_row, is_null_key);
+    uint64_t key_size = 2;
+    append_pod(&expected_string_row, key_size);
+    expected_string_row.append("ab", key_size);
+    sum = 4;
+    append_pod(&expected_string_row, sum);
+    append_pod(&expected_string_row, count);
+    is_null_key = true;
+    append_pod(&expected_string_row, is_null_key);
+    sum = 6;
+    append_pod(&expected_string_row, sum);
+    append_pod(&expected_string_row, count);
+
+    EXPECT_EQ(expected_string_row, string_serialized->get(0).get_slice().to_string());
 }
 
 TEST_F(AvgMapTest, stringKeysAndValuesOutliveInput) {
